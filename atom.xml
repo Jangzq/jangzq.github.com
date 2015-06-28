@@ -5,7 +5,7 @@
   <subtitle><![CDATA[关注代码的秘密， 记录探索点滴， 分享技术收获]]></subtitle>
   <link href="/atom.xml" rel="self"/>
   <link href="http://jangzq.info//"/>
-  <updated>2015-06-28T03:49:19.000Z</updated>
+  <updated>2015-06-28T09:12:59.000Z</updated>
   <id>http://jangzq.info//</id>
   
   <author>
@@ -16,11 +16,43 @@
   <generator uri="http://hexo.io/">Hexo</generator>
   
   <entry>
+    <title><![CDATA[HotSpot的TLAB实现解析]]></title>
+    <link href="http://jangzq.info/2015/06/28/tlab/"/>
+    <id>http://jangzq.info/2015/06/28/tlab/</id>
+    <published>2015-06-28T09:12:50.000Z</published>
+    <updated>2015-06-28T09:12:59.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>本文解析了TLAB的实现机制，最后讨论了如何利用TLAB机制，进行高效程序设计，如果你对原理不感兴趣，也请看下<strong>启示</strong>部分。</p>
+<p>内存分配是虚拟机最常见的操作之一，所以处理效率高低对整体性能有很大的影响。同时，虚拟机是一个多线程的运行环境，内存分配也不可避免的受到并发的制约，而锁又是造成性能下降的主因之一，即使使用CAS，对于如此频繁的操作也是巨大的性能负担。<br>一个自然而然的想法是将内存分为几个部分，每个线程只使用自己的内存区域，这样内存分配就不用进行同步，当然能达到较高的效率，TLAB就是这种想法的产物。每一个线程都有自己的一片内存区域，这片区域就叫<strong>TLAB(Thread Local alloc Buffer)</strong>，虚拟机的任务就是合理的分配TLAB的大小，使内存分配都尽量在TLAB中完成，以达到更高的效率。</p>
+<h2 id="TLAB机制解析">TLAB机制解析</h2><p>hotspot用Thread类（Thread.cpp，不是java类）来描述一个线程，在Thread类里有一个<code>ThreadLocalAllocBuffer _tlab</code>变量，表征这个线程的tlab。在ThreadLocalAllocBuffer 类里，有三个属性描述了tlab的范围及使用情况，<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* _start;      <span class="comment">//当前tlab的起始地址</span></span><br><span class="line">HeapWord* <span class="keyword">_t</span>op;        <span class="comment">//最后一次在tlab上分配内存后的指针位置。</span></span><br><span class="line">HeapWord* _end;       <span class="comment">//tlab的结束地址。</span></span><br></pre></td></tr></table></figure></p>
+<p>采用这样的方法，首先要考虑，给每个线程的TLAB分配多大空间。分配大了，别的线程又无法使用，造成了浪费；分配小了，剩余的空间不够分配的时候，还需要采用别的方式分配。每个线程需要分配的内存是不同的，有的线程需要分配的内存多，有的现场分配的内存少，给所有线程分配同样大小的TLAB空间显然是不适合的。另外，一个线程不同的时间可能有不同的内存要求，这段时间使用内存多，过一会儿又少了，所以给一个线程固定的TLAB空间显然也是不适合的。也就是，需要解决下面两个问题：1）一个线程的TLAB初始时分配多大。2）什么时候进行动态调整，调整成多大。本文将围绕这两个问题，深入hotspot源码，探究答案。</p>
+<h3 id="初始分配">初始分配</h3><a id="more"></a>
+<p>当一个线程刚刚创建的时候，虚拟机这个线程的行为习惯一无所知，所以需要给它分配一个初始值。最简单的情况是，在启动虚拟机的时候通过<code>TLABSize</code>参数进行指定，需要注意的是，这个参数指定的值，也就是这时候使用一次，以后的TLAB大小和这个值就无关了（见<code>ThreadLocalAllocBuffer::initial_desired_size</code>方法）。如果没有指定这个值，虚拟机就需要自行决定给这个现场分配TLAB的大小了，显而易见，一个线程TLAB应该分配多少，和三个参数有关，一个是<strong>线程总数</strong>，线程越多，每个线程能分配的就越少；另一个参数就是<strong>可供分配的总空间</strong>；不可能把所有的可分配的空间都分配给线程做TLAB，如果这样分配，当一个线程的TLAB不够分配的时候，又没有别的适合分配的空间，势必造成gc，导致别的线程没有使用的TLAB造成了浪费，所以最后一个参数是<strong>每次分配的比例</strong>，这个比例越大，当gc时候，没使用的造成的浪费就越大。这里有一个例外情况，当这个线程是主线程的时候，这个时候heap还没有创建，所以hotspot给它分配了一个缺省值2K，这个值可以由启动参数<code>MinTLABSize</code>指定（见<code>ThreadLocalAllocBuffer::initial_desired_size</code>方法）。<br>当线程不是主线程的时候，就需要结合上面提到的三个参数，确定合适的值。首要问题是这两个值怎么得到，下面首先讨论线程数。由于TLAB分配后要使用一段时间，所以使用当时的线程数是没有意义的，所以在hotspot中，使用的线程数是一种自适应的加权平均的线程数（<code>GlobalTLABStats</code>的<code>_allocating_threads_avg</code>变量，类型是<code>AdaptiveWeightedAverage</code>）。hotspot在每次gc前，统计当前线程中从上次gc以来，曾经使用过TLAB的线程数，用这个线程数和过去得到的历史值进行一个加权平均，即<code>(100.0 - weight) * 历史平均值 / 100.0 + weight * 当前采样值 / 100.0</code>。公式中的weight由<code>TLABAllocationWeight</code>参数决定，如果不设置的话，缺省是35。（线程数的计算过程，见程序<code>ThreadLocalAllocBuffer::accumulate_statistics_before_gc</code>）。<br>第二个参数：可供分配的总空间，在hotspot中，调用<code>CollectedHeap</code>的<code>tlab_capacity</code>函数得到可供tlab分配的总空间，这个函数是一个虚函数，依赖于具体的实现。在采用分代的gc方法时，这个值是整个eden的大小（见<code>DefNewGeneration::tlab_capacity</code>）。<br>最后一个参数：一次分配的比例。在hotspot中通过eden可以浪费的百分比（Percentage of Eden that can be wasted）来指定，虚拟机参数为：<code>TLABWasteTargetPercent</code>。这个值缺省为1，即在gc的时候，已经分配给TLAB，还没有使用的内存，不应该超过eden的1%，所以一次分配eden的2%，当gc的时候，从概率上说，有一半的还没有用，所以浪费了1%，也就是说，一次分配的比例，应该是<code>TLABWasteTargetPercent*2</code>，在hotspot中，将<code>100/(TLABWasteTargetPercent*2）</code>称为<code>_target_refills</code>，即希望在<code>_target_refills</code>次分配后，分配完所有的空间，这个值仅是”期望“，并没有任何的硬性限制。<br>确定了三个参数后，一个线程最初分配的tlab的大小即：<code>可供分配的总空间/(线程数*_target_refills)</code>，在hotspot中，这个值叫做<code>desired_size</code>。（见<code>ThreadLocalAllocBuffer::initial_desired_size</code>方法）</p>
+<h3 id="动态调整">动态调整</h3><p>解决了线程TLAB初始分配的问题后，我看看看hotspot如何使用tlab，我们看的代码在：<code>CollectedHeap::common_mem_allocate_noinit</code>。其实，当hotspot用new指令生成对象的时候，通常情况下不会执行到这个方法，hotspot会使用快速分配，首先使用tlab，从当前的线程的tlab的<code>top</code>指针开始分配指定大小的内存，直接修改<code>top</code>指针即可，如果分配的内存大于当前tlab还剩下来的空间，则需要在eden上非tlab的空间进行分配，当然这个过程就需要使用CAS来保证（这个不是本文的研究内容，所以略过），当使用慢速分配或者分配数组的空间时，就会执行<code>CollectedHeap::common_mem_allocate_noinit</code>这个方法。在这个方法里，调用了<code>allocate_from_tlab</code>，顾名思义，即在Tlab上进行分配，只不过这个方法在TLAB空间不够的情况下，会分配新的TLAB空间。由于在Eden中，内存的分配是连续的，所以不能扩大一个已有的TLAB的大小，只有新建一个，这样还没有使用的内存就浪费了，所以并不是每次TLAB不够分配的时候，都会分配新的TLAB，在hotspot中，会查看TLAB剩余的大小，是否小于一个阈值，如果大于这个阈值，那么就不会新分配一个TLAB，而是不在TLAB分配内存，否则就新建一个TLAB。这个阈值由两个JDK参数控制: <code>TLABRefillWasteFraction</code>和<code>TLABWasteIncrement</code>，最初，等于<code>desired_size/TLABRefillWasteFraction</code>，<code>TLABRefillWasteFraction</code>缺省为64，当每一次不成功的分配，这个阈值增长<code>TLABWasteIncrement</code>，单位是<code>HeapWordSize</code>。在丢弃原来的TLAB时，调用<code>make_parsable</code>将剩余的空间填上对象，这个是便于gc时使用。</p>
+<p>在TLAB的设计中，处处体现了动态调整的思想。给每个线程分配的TLAB空间并不是一成不变的，这个调整的时机就是GC的时候。当GC后，hotspot会调整所有TLAB的大小，调整的依据当然是每个线程过去对于TLAB的使用情况，同上文中的“线程数”的计算思路一致，也是采用加权平均的方法。<code>ThreadLocalAllocBuffer</code>类的<code>_allocation_fraction</code>变量即代表了这个加权平均值，采样的是：线程的TLAB占所有已经使用的内存的比例（<code>ThreadLocalAllocBuffer::accumulate_statistics</code>）。具体实现细节就不需赘述了，请自行参考源代码(<code>ThreadLocalAllocBuffer::resize</code>)。</p>
+<h3 id="结论">结论</h3><p>可以看出，hotspot的TLAB实现中的各种手段，都是为了达到“尽量少的浪费空间”和“尽可能多在TLAB中分配”的平衡，如果一个线程的TLAB分配的空间过大，造成别的线程分配内存不够用，引起gc，造成了空间的浪费；如果分配的过小，造成在TLAB中无法分配，只能在share eden中分配，造成使用CAS等同步操作。所以hotspot采用一种自适应的方式，根据一个线程的过往行为，动态的调整其TLAB大小，力争达到最优的结果。</p>
+<h2 id="启示">启示</h2><p>首先，不讨论线程创建的开销，即使从TLAB的角度来看，频繁的生成短生命周期的线程是不可取的，因为hotspot费劲力气设计的“动态调整TLAB”算法，在这种情况下根本用不上，回回只能用初始的值，不能保证内存分配的效果。所以我们一定要使用接近固定的线程池。 其次，尽量的保证每个线程里的行为特征比较固定，让程序的行为能被jvm所侦知，否则基于统计的大小预测效果不会太好，造成大量的TLAB浪费，更加频繁的gc。最后，说句题外话，这应该是一切程序开发的准则，按照“底层依赖系统”期望你的行为去执行，才能达到最高效率，软硬都是如此，比如cpu的cache、比如cpu的指令预取，linux文件预读…….。如果辜负了“底层依赖系统”的期望，轻则效率低，重则踩坑，焉能不慎乎？</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>本文解析了TLAB的实现机制，最后讨论了如何利用TLAB机制，进行高效程序设计，如果你对原理不感兴趣，也请看下<strong>启示</strong>部分。</p>
+<p>内存分配是虚拟机最常见的操作之一，所以处理效率高低对整体性能有很大的影响。同时，虚拟机是一个多线程的运行环境，内存分配也不可避免的受到并发的制约，而锁又是造成性能下降的主因之一，即使使用CAS，对于如此频繁的操作也是巨大的性能负担。<br>一个自然而然的想法是将内存分为几个部分，每个线程只使用自己的内存区域，这样内存分配就不用进行同步，当然能达到较高的效率，TLAB就是这种想法的产物。每一个线程都有自己的一片内存区域，这片区域就叫<strong>TLAB(Thread Local alloc Buffer)</strong>，虚拟机的任务就是合理的分配TLAB的大小，使内存分配都尽量在TLAB中完成，以达到更高的效率。</p>
+<h2 id="TLAB机制解析">TLAB机制解析</h2><p>hotspot用Thread类（Thread.cpp，不是java类）来描述一个线程，在Thread类里有一个<code>ThreadLocalAllocBuffer _tlab</code>变量，表征这个线程的tlab。在ThreadLocalAllocBuffer 类里，有三个属性描述了tlab的范围及使用情况，<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* _start;      <span class="comment">//当前tlab的起始地址</span></span><br><span class="line">HeapWord* <span class="keyword">_t</span>op;        <span class="comment">//最后一次在tlab上分配内存后的指针位置。</span></span><br><span class="line">HeapWord* _end;       <span class="comment">//tlab的结束地址。</span></span><br></pre></td></tr></table></figure></p>
+<p>采用这样的方法，首先要考虑，给每个线程的TLAB分配多大空间。分配大了，别的线程又无法使用，造成了浪费；分配小了，剩余的空间不够分配的时候，还需要采用别的方式分配。每个线程需要分配的内存是不同的，有的线程需要分配的内存多，有的现场分配的内存少，给所有线程分配同样大小的TLAB空间显然是不适合的。另外，一个线程不同的时间可能有不同的内存要求，这段时间使用内存多，过一会儿又少了，所以给一个线程固定的TLAB空间显然也是不适合的。也就是，需要解决下面两个问题：1）一个线程的TLAB初始时分配多大。2）什么时候进行动态调整，调整成多大。本文将围绕这两个问题，深入hotspot源码，探究答案。</p>
+<h3 id="初始分配">初始分配</h3>]]>
+    
+    </summary>
+    
+      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
+    
+  </entry>
+  
+  <entry>
     <title><![CDATA[overcommit_memory深入解析]]></title>
-    <link href="http://jangzq.info/2015/06/28/overcommit_memory/"/>
-    <id>http://jangzq.info/2015/06/28/overcommit_memory/</id>
-    <published>2015-06-28T03:49:19.000Z</published>
-    <updated>2015-06-28T03:49:19.000Z</updated>
+    <link href="http://jangzq.info/2015/06/27/overcommit_memory/"/>
+    <id>http://jangzq.info/2015/06/27/overcommit_memory/</id>
+    <published>2015-06-27T15:32:52.000Z</published>
+    <updated>2015-06-28T09:14:03.000Z</updated>
     <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
 <p>本文从内核角度分析了内核参数<code>overcommit_memory</code>的影响，并给出了如何应用此参数的建议意见。</p>
 <h2 id="实例">实例</h2><p>首先，从一个实例开始：<br><strong>操作系统： </strong></p>
@@ -36,7 +68,7 @@
 <p>Error occurred during initialization of VM<br>Could not reserve enough space for object heap<br>Could not create the Java virtual machine.</p>
 </blockquote>
 <p>疑惑：粗略的考虑一下，linux是使用虚拟内存的，而且linux分配给进程内存时候，只是分配一个地址空间，并不是马上分配内存，那么是什么限制导致了java虚拟机在初始化的时候即退出呢?</p>
-<h2 id="解析">解析</h2><p>首先，我们看一下java虚拟机是用什么系统调用来请求内存？<br>java虚拟机使用-Xms 和-Xmx指出java的堆的初始大小和最大大小，在java进程启动的时候，java虚拟机按照初始大小请求内存，但是虚拟机是用什么来请求内存呢？我们使用strace来看一下（我们使用 -Xms1G -Xmx1G的参数启动）：<br>得到如下输出<br>[pid 15854] mmap(NULL, 1159725056, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0) = -1 ENOMEM (Cannot allocate memory)<br>从以上打印我们可以看出，java虚拟机是通过mmap系统调用来请求内存的，在这里返回了-1，即ENOMEM</p>
+<h2 id="解析">解析</h2><p>首先，我们看一下java虚拟机是用什么系统调用来请求内存？<br>java虚拟机使用-Xms 和-Xmx指出java的堆的初始大小和最大大小，在java进程启动的时候，java虚拟机按照初始大小请求内存，但是虚拟机是用什么来请求内存呢？我们使用strace来看一下（我们使用 -Xms1G -Xmx1G的参数启动）：<br>得到如下输出<br><a id="more"></a><br>[pid 15854] mmap(NULL, 1159725056, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0) = -1 ENOMEM (Cannot allocate memory)<br>从以上打印我们可以看出，java虚拟机是通过mmap系统调用来请求内存的，在这里返回了-1，即ENOMEM</p>
 <p>然后，我们看一下mmap的源代码，发现了在mm/mmap.c中的__vm_enough_memory方法中，判断了是否有足够内存，下面我们深入分析一下。<br>在这个函数中我们发现了导致此问题的内核参数:overcommit_memory，此参数在/proc下的文件为：/proc/sys/vm/overcommit_memory 。这个参数的解释如下：</p>
 <blockquote>
 <p>This file contains the kernel virtual memory accounting mode. Values are:<br>              0: heuristic overcommit (this is the default)<br>              1: always overcommit, never check<br>              2: always check, never overcommit</p>
@@ -55,7 +87,22 @@
 ]]></content>
     <summary type="html">
     <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>本文从内核角度分析了内核参数<code>overcommit_memory</code>的影响]]>
+<p>本文从内核角度分析了内核参数<code>overcommit_memory</code>的影响，并给出了如何应用此参数的建议意见。</p>
+<h2 id="实例">实例</h2><p>首先，从一个实例开始：<br><strong>操作系统： </strong></p>
+<blockquote>
+<p>linux 2.6.38</p>
+</blockquote>
+<p><strong>JDK版本：</strong></p>
+<blockquote>
+<p>java version “1.6.0_30”<br>Java(TM) SE Runtime Environment (build 1.6.0_30-b12)<br>Java HotSpot(TM) 64-Bit Server VM (build 20.5-b03, mixed mode)</p>
+</blockquote>
+<p>现象：启动java进程的时候，报如下的错误后退出</p>
+<blockquote>
+<p>Error occurred during initialization of VM<br>Could not reserve enough space for object heap<br>Could not create the Java virtual machine.</p>
+</blockquote>
+<p>疑惑：粗略的考虑一下，linux是使用虚拟内存的，而且linux分配给进程内存时候，只是分配一个地址空间，并不是马上分配内存，那么是什么限制导致了java虚拟机在初始化的时候即退出呢?</p>
+<h2 id="解析">解析</h2><p>首先，我们看一下java虚拟机是用什么系统调用来请求内存？<br>java虚拟机使用-Xms 和-Xmx指出java的堆的初始大小和最大大小，在java进程启动的时候，java虚拟机按照初始大小请求内存，但是虚拟机是用什么来请求内存呢？我们使用strace来看一下（我们使用 -Xms1G -Xmx1G的参数启动）：<br>得到如下输出<br>]]>
+    
     </summary>
     
       <category term="linux内核" scheme="http://jangzq.info/tags/linux%E5%86%85%E6%A0%B8/"/>

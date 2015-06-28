@@ -22,7 +22,7 @@ JDK版本：
 java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 <meta property="og:type" content="article">
 <meta property="og:title" content="overcommit_memory深入解析">
-<meta property="og:url" content="http://jangzq.info/2015/06/28/overcommit_memory/index.html">
+<meta property="og:url" content="http://jangzq.info/2015/06/27/overcommit_memory/index.html">
 <meta property="og:site_name" content="Jangzq技术研究">
 <meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
 本文从内核角度分析了内核参数overcommit_memory的影响，并给出了如何应用此参数的建议意见。
@@ -33,7 +33,7 @@ linux 2.6.38
 JDK版本：
 
 java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
-<meta property="og:updated_time" content="2015-06-28T03:49:19.000Z">
+<meta property="og:updated_time" content="2015-06-28T09:14:03.000Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="overcommit_memory深入解析">
 <meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
@@ -100,14 +100,14 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 		<header class="article-info clearfix">
   <h1 itemprop="name">
     
-      <a href="/2015/06/28/overcommit_memory/" title="overcommit_memory深入解析" itemprop="url">overcommit_memory深入解析</a>
+      <a href="/2015/06/27/overcommit_memory/" title="overcommit_memory深入解析" itemprop="url">overcommit_memory深入解析</a>
   </h1>
   <p class="article-author">By
        
 		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
 		
   <p class="article-time">
-    <time datetime="2015-06-28T03:49:19.000Z" itemprop="datePublished"> 发表于 2015-06-28</time>
+    <time datetime="2015-06-27T15:32:52.000Z" itemprop="datePublished"> 发表于 2015-06-27</time>
     
   </p>
 </header>
@@ -135,7 +135,7 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 <p>Error occurred during initialization of VM<br>Could not reserve enough space for object heap<br>Could not create the Java virtual machine.</p>
 </blockquote>
 <p>疑惑：粗略的考虑一下，linux是使用虚拟内存的，而且linux分配给进程内存时候，只是分配一个地址空间，并不是马上分配内存，那么是什么限制导致了java虚拟机在初始化的时候即退出呢?</p>
-<h2 id="解析">解析</h2><p>首先，我们看一下java虚拟机是用什么系统调用来请求内存？<br>java虚拟机使用-Xms 和-Xmx指出java的堆的初始大小和最大大小，在java进程启动的时候，java虚拟机按照初始大小请求内存，但是虚拟机是用什么来请求内存呢？我们使用strace来看一下（我们使用 -Xms1G -Xmx1G的参数启动）：<br>得到如下输出<br>[pid 15854] mmap(NULL, 1159725056, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0) = -1 ENOMEM (Cannot allocate memory)<br>从以上打印我们可以看出，java虚拟机是通过mmap系统调用来请求内存的，在这里返回了-1，即ENOMEM</p>
+<h2 id="解析">解析</h2><p>首先，我们看一下java虚拟机是用什么系统调用来请求内存？<br>java虚拟机使用-Xms 和-Xmx指出java的堆的初始大小和最大大小，在java进程启动的时候，java虚拟机按照初始大小请求内存，但是虚拟机是用什么来请求内存呢？我们使用strace来看一下（我们使用 -Xms1G -Xmx1G的参数启动）：<br>得到如下输出<br><a id="more"></a><br>[pid 15854] mmap(NULL, 1159725056, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0) = -1 ENOMEM (Cannot allocate memory)<br>从以上打印我们可以看出，java虚拟机是通过mmap系统调用来请求内存的，在这里返回了-1，即ENOMEM</p>
 <p>然后，我们看一下mmap的源代码，发现了在mm/mmap.c中的__vm_enough_memory方法中，判断了是否有足够内存，下面我们深入分析一下。<br>在这个函数中我们发现了导致此问题的内核参数:overcommit_memory，此参数在/proc下的文件为：/proc/sys/vm/overcommit_memory 。这个参数的解释如下：</p>
 <blockquote>
 <p>This file contains the kernel virtual memory accounting mode. Values are:<br>              0: heuristic overcommit (this is the default)<br>              1: always overcommit, never check<br>              2: always check, never overcommit</p>
@@ -168,7 +168,7 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 
 	<div class="article-share" id="share">
 	
-	  <div data-url="http://jangzq.info/2015/06/28/overcommit_memory/" data-title="overcommit_memory深入解析 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  <div data-url="http://jangzq.info/2015/06/27/overcommit_memory/" data-title="overcommit_memory深入解析 | Jangzq技术研究" data-tsina="null" class="share clearfix">
 	  </div>
 	
 	</div>
@@ -179,6 +179,19 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
    	       
 	</article>
 	
+<nav class="article-nav clearfix">
+ 
+ <div class="prev" >
+ <a href="/2015/06/28/tlab/" title="HotSpot的TLAB实现解析">
+  <strong>上一篇：</strong><br/>
+  <span>
+  HotSpot的TLAB实现解析</span>
+</a>
+</div>
+
+
+</nav>
+
 	
 
 </div>  
@@ -201,6 +214,10 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 <div class="tagslist">
 	<p class="asidetitle">标签</p>
 		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>1</sup></a></li>
+			
 		
 			
 				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>1</sup></a></li>

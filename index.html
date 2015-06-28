@@ -77,14 +77,75 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
-      <a href="/2015/06/28/overcommit_memory/" title="overcommit_memory深入解析" itemprop="url">overcommit_memory深入解析</a>
+      <a href="/2015/06/28/tlab/" title="HotSpot的TLAB实现解析" itemprop="url">HotSpot的TLAB实现解析</a>
   </h1>
   <p class="article-author">By
        
 		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
 		
   <p class="article-time">
-    <time datetime="2015-06-28T03:49:19.000Z" itemprop="datePublished"> 发表于 2015-06-28</time>
+    <time datetime="2015-06-28T09:12:50.000Z" itemprop="datePublished"> 发表于 2015-06-28</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>本文解析了TLAB的实现机制，最后讨论了如何利用TLAB机制，进行高效程序设计，如果你对原理不感兴趣，也请看下<strong>启示</strong>部分。</p>
+<p>内存分配是虚拟机最常见的操作之一，所以处理效率高低对整体性能有很大的影响。同时，虚拟机是一个多线程的运行环境，内存分配也不可避免的受到并发的制约，而锁又是造成性能下降的主因之一，即使使用CAS，对于如此频繁的操作也是巨大的性能负担。<br>一个自然而然的想法是将内存分为几个部分，每个线程只使用自己的内存区域，这样内存分配就不用进行同步，当然能达到较高的效率，TLAB就是这种想法的产物。每一个线程都有自己的一片内存区域，这片区域就叫<strong>TLAB(Thread Local alloc Buffer)</strong>，虚拟机的任务就是合理的分配TLAB的大小，使内存分配都尽量在TLAB中完成，以达到更高的效率。</p>
+<h2 id="TLAB机制解析">TLAB机制解析</h2><p>hotspot用Thread类（Thread.cpp，不是java类）来描述一个线程，在Thread类里有一个<code>ThreadLocalAllocBuffer _tlab</code>变量，表征这个线程的tlab。在ThreadLocalAllocBuffer 类里，有三个属性描述了tlab的范围及使用情况，<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* _start;      <span class="comment">//当前tlab的起始地址</span></span><br><span class="line">HeapWord* <span class="keyword">_t</span>op;        <span class="comment">//最后一次在tlab上分配内存后的指针位置。</span></span><br><span class="line">HeapWord* _end;       <span class="comment">//tlab的结束地址。</span></span><br></pre></td></tr></table></figure></p>
+<p>采用这样的方法，首先要考虑，给每个线程的TLAB分配多大空间。分配大了，别的线程又无法使用，造成了浪费；分配小了，剩余的空间不够分配的时候，还需要采用别的方式分配。每个线程需要分配的内存是不同的，有的线程需要分配的内存多，有的现场分配的内存少，给所有线程分配同样大小的TLAB空间显然是不适合的。另外，一个线程不同的时间可能有不同的内存要求，这段时间使用内存多，过一会儿又少了，所以给一个线程固定的TLAB空间显然也是不适合的。也就是，需要解决下面两个问题：1）一个线程的TLAB初始时分配多大。2）什么时候进行动态调整，调整成多大。本文将围绕这两个问题，深入hotspot源码，探究答案。</p>
+<h3 id="初始分配">初始分配</h3>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/06/28/tlab/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/06/27/overcommit_memory/" title="overcommit_memory深入解析" itemprop="url">overcommit_memory深入解析</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-06-27T15:32:52.000Z" itemprop="datePublished"> 发表于 2015-06-27</time>
     
   </p>
 </header>
@@ -105,26 +166,12 @@
 <p>Error occurred during initialization of VM<br>Could not reserve enough space for object heap<br>Could not create the Java virtual machine.</p>
 </blockquote>
 <p>疑惑：粗略的考虑一下，linux是使用虚拟内存的，而且linux分配给进程内存时候，只是分配一个地址空间，并不是马上分配内存，那么是什么限制导致了java虚拟机在初始化的时候即退出呢?</p>
-<h2 id="解析">解析</h2><p>首先，我们看一下java虚拟机是用什么系统调用来请求内存？<br>java虚拟机使用-Xms 和-Xmx指出java的堆的初始大小和最大大小，在java进程启动的时候，java虚拟机按照初始大小请求内存，但是虚拟机是用什么来请求内存呢？我们使用strace来看一下（我们使用 -Xms1G -Xmx1G的参数启动）：<br>得到如下输出<br>[pid 15854] mmap(NULL, 1159725056, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0) = -1 ENOMEM (Cannot allocate memory)<br>从以上打印我们可以看出，java虚拟机是通过mmap系统调用来请求内存的，在这里返回了-1，即ENOMEM</p>
-<p>然后，我们看一下mmap的源代码，发现了在mm/mmap.c中的__vm_enough_memory方法中，判断了是否有足够内存，下面我们深入分析一下。<br>在这个函数中我们发现了导致此问题的内核参数:overcommit_memory，此参数在/proc下的文件为：/proc/sys/vm/overcommit_memory 。这个参数的解释如下：</p>
-<blockquote>
-<p>This file contains the kernel virtual memory accounting mode. Values are:<br>              0: heuristic overcommit (this is the default)<br>              1: always overcommit, never check<br>              2: always check, never overcommit</p>
-</blockquote>
-<p>检查一下这台机子上的配置，</p>
-<blockquote>
-<p>cat /proc/sys/vm/overcommit_memory<br>2 </p>
-</blockquote>
-<p>果然被设置成了2。<br>改成0后，再执行，确实就不在报错退出了。<br>我们下一步通过源码进一步分析一下各个参数值的含义。<br>当参数为1时，这时不检查，直接返回0（内存足够）<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (sysctl_overcommit_memory == OVERCOMMIT_ALWAYS)</span><br><span class="line">          <span class="keyword">return</span> <span class="number">0</span>;</span><br></pre></td></tr></table></figure></p>
-<p>当参数时0时，这时候先拿要请求页数和这个计算值比较：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">(global_page_state(NR_FILE_PAGES)+ nr_swap_pages+global_page_state(NR_SLAB_RECLAIMABLE))*<span class="number">31</span>/<span class="number">32</span></span><br></pre></td></tr></table></figure></p>
-<p>即：文件缓存所占的页数+空闲的swap page数量+可以回收的SLAB的空间，然后再留下3%供root使用。<br>如果请求页数小于这个计算值，则返回0，否则把上面的计算值再加上一个值，再比较，这个值是：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">（global_page_state(NR_FREE_PAGES) -totalreserve_pages）*<span class="number">31</span>/<span class="number">32</span></span><br></pre></td></tr></table></figure></p>
-<p>空闲的内存（页数）-需要保留的内存（必须保留备用的内存），再留下3%供root使用的。<br>通过上面的公式可以看出，在这个参数的情况下，操作系统就是看一下还可用的页（包括swap中和内存中的）是否能满足这次请求的内存，而不管别的进程是否已经请求了很大的内存。这实际是存在风险的，因为虚拟内存已经申请，只是暂时没用，等大家一起使用内存的时候，内存有可能不够用，就会造成OOM-killed进程来终止进程了。<br>为什么需要分以上两步，这是因为历史原因，在以前的版本，nr_free_pages()开销比较大，所以先比较第一步，如果第一步不能满足才比较第二步，2.6.38的代码中，这个函数也是直接取计数器的值了，所以开销应该不大了。</p>
-<p>当参数时2时，这时操作系统是拿所有进程请求的(commit)的内存，和一个阈值比较，这个阈值为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">（(totalram_pages - <span class="keyword">hugetlb_t</span>otal_pages()) * sysctl_overcommit_ratio / <span class="number">100</span>）*<span class="number">31</span>/<span class="number">32</span>+total_swap_pages</span><br></pre></td></tr></table></figure></p>
-<p>含义是：(所有的内存-大页面所占的内存)然后，乘上<code>sysctl_overcommit_ratio</code>设定的百分比，保留给root用的之后，加上swap的大小。<br>即：所有进程的虚拟内存申请量不能大于 所有内存（除去大页面内存）*<code>sysctl_overcommit_ratio</code>，在加上swap的大小。<code>sysctl_overcommit_ratio</code>这个名称现在似乎名不符实，是不是？</p>
-<h2 id="结论">结论</h2><p>这两个内核参数应当谨慎设置，以免引起不必要的麻烦。<br>1）在生产环境里，<code>overcommit_memory</code>尽量不要设置为1，这是因为这会大大增加OOM-killed的几率，增加了整个系统的不稳定性。<br>2）如果运行的应用程序的内存可以预测，如数据库，我们可以使用2，因为数据库启动后，将关键的所需内存全部申请了虚拟内存，所以可以防止在数据库主机上运行某些不重要的程序时，造成oom，导致数据库被kill，限制其它程序申请虚拟内存，还可以减少内存导入导出的可能性。<br>3）如果实在不能确定所需内存（我们尽量避免这种情况），就用0吧，但一定要考虑到oom的风险。</p>
-
+<h2 id="解析">解析</h2><p>首先，我们看一下java虚拟机是用什么系统调用来请求内存？<br>java虚拟机使用-Xms 和-Xmx指出java的堆的初始大小和最大大小，在java进程启动的时候，java虚拟机按照初始大小请求内存，但是虚拟机是用什么来请求内存呢？我们使用strace来看一下（我们使用 -Xms1G -Xmx1G的参数启动）：<br>得到如下输出<br>
         
         
         <p class="article-more-link">
+          
+            <a href="/2015/06/27/overcommit_memory/#more">Read More</a>
           
        </p>
     </div>
@@ -170,6 +217,10 @@
 <div class="tagslist">
 	<p class="asidetitle">标签</p>
 		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>1</sup></a></li>
+			
 		
 			
 				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>1</sup></a></li>

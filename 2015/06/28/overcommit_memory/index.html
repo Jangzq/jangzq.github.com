@@ -22,7 +22,7 @@ JDK版本：
 java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 <meta property="og:type" content="article">
 <meta property="og:title" content="overcommit_memory深入解析">
-<meta property="og:url" content="http://jangzq.info/2015/06/27/overcommit_memory/index.html">
+<meta property="og:url" content="http://jangzq.info/2015/06/28/overcommit_memory/index.html">
 <meta property="og:site_name" content="Jangzq技术研究">
 <meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
 本文从内核角度分析了内核参数overcommit_memory的影响，并给出了如何应用此参数的建议意见。
@@ -33,7 +33,7 @@ linux 2.6.38
 JDK版本：
 
 java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
-<meta property="og:updated_time" content="2015-06-27T13:58:36.000Z">
+<meta property="og:updated_time" content="2015-06-28T03:49:19.000Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="overcommit_memory深入解析">
 <meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
@@ -74,11 +74,11 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 				<ul>
 					<ul>
 					 
-						<li><a href="/">Home</a></li>
+						<li><a href="/">主页</a></li>
 					
-						<li><a href="/archives">Archives</a></li>
+						<li><a href="/archives">归档</a></li>
 					
-						<li><a href="/about">About</a></li>
+						<li><a href="/about">关于我</a></li>
 					
 					<li>
  					
@@ -100,14 +100,14 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 		<header class="article-info clearfix">
   <h1 itemprop="name">
     
-      <a href="/2015/06/27/overcommit_memory/" title="overcommit_memory深入解析" itemprop="url">overcommit_memory深入解析</a>
+      <a href="/2015/06/28/overcommit_memory/" title="overcommit_memory深入解析" itemprop="url">overcommit_memory深入解析</a>
   </h1>
   <p class="article-author">By
        
 		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
 		
   <p class="article-time">
-    <time datetime="2015-06-27T13:58:36.000Z" itemprop="datePublished"> 发表于 2015-06-27</time>
+    <time datetime="2015-06-28T03:49:19.000Z" itemprop="datePublished"> 发表于 2015-06-28</time>
     
   </p>
 </header>
@@ -157,13 +157,18 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 <div class="article-catetags">
 
 
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/linux内核/">linux内核</a>
+  </div>
+
 </div>
 
 
 
 	<div class="article-share" id="share">
 	
-	  <div data-url="http://jangzq.info/2015/06/27/overcommit_memory/" data-title="overcommit_memory深入解析 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  <div data-url="http://jangzq.info/2015/06/28/overcommit_memory/" data-title="overcommit_memory深入解析 | Jangzq技术研究" data-tsina="null" class="share clearfix">
 	  </div>
 	
 	</div>
@@ -193,6 +198,17 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
   
 
   
+<div class="tagslist">
+	<p class="asidetitle">标签</p>
+		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>1</sup></a></li>
+			
+		
+		</ul>
+</div>
+
 
   <div class="linkslist">
   <p class="asidetitle">友情链接</p>
@@ -392,6 +408,11 @@ $(document).ready(function(){
 <!-- Analytics Begin -->
 
 
+
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3F435d1985a249fde8415798105b4f848b' type='text/javascript'%3E%3C/script%3E"));
+</script>
 
 
 

@@ -2,7 +2,7 @@
 <feed xmlns="http://www.w3.org/2005/Atom">
   
   <title><![CDATA[Jangzq技术研究]]></title>
-  <subtitle><![CDATA[关注代码的秘密， 记录探索点滴, 分享技术收获]]></subtitle>
+  <subtitle><![CDATA[关注代码的秘密， 记录探索点滴， 分享技术收获]]></subtitle>
   <link href="/atom.xml" rel="self"/>
   <link href="http://jangzq.info//"/>
   <updated>2015-06-28T03:49:19.000Z</updated>

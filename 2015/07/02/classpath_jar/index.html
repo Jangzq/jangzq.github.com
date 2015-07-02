@@ -4,22 +4,26 @@
 <head>
   <meta charset="UTF-8">
   
-    <title>Jangzq技术研究</title>
+    <title>classpath中没用到的jar的影响 | Jangzq技术研究</title>
     <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
     
     <meta name="author" content="Zhang Zq">
     
 
     
-    <meta name="description" content="Jangzq&apos;s blog | java | linux | postgresql | mysql | hadoop">
-<meta property="og:type" content="website">
-<meta property="og:title" content="Jangzq技术研究">
-<meta property="og:url" content="http://jangzq.info/index.html">
+    <meta name="description" content="有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。1jzfile *  ZIP_Put_In_Cache0(const char *name, ZFILE zfd, char **pmsg, jlong lastModified, jboolean usemmap)
+在这个方法里">
+<meta property="og:type" content="article">
+<meta property="og:title" content="classpath中没用到的jar的影响">
+<meta property="og:url" content="http://jangzq.info/2015/07/02/classpath_jar/index.html">
 <meta property="og:site_name" content="Jangzq技术研究">
-<meta property="og:description" content="Jangzq&apos;s blog | java | linux | postgresql | mysql | hadoop">
+<meta property="og:description" content="有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。1jzfile *  ZIP_Put_In_Cache0(const char *name, ZFILE zfd, char **pmsg, jlong lastModified, jboolean usemmap)
+在这个方法里">
+<meta property="og:updated_time" content="2015-07-02T13:28:07.000Z">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Jangzq技术研究">
-<meta name="twitter:description" content="Jangzq&apos;s blog | java | linux | postgresql | mysql | hadoop">
+<meta name="twitter:title" content="classpath中没用到的jar的影响">
+<meta name="twitter:description" content="有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。1jzfile *  ZIP_Put_In_Cache0(const char *name, ZFILE zfd, char **pmsg, jlong lastModified, jboolean usemmap)
+在这个方法里">
 
     
     <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
@@ -69,12 +73,10 @@
 </div>
     </header>
     <div id="container">
-      <div id="main">
-
-   
-    
-    <article class="post-expand post" itemprop="articleBody"> 
-        <header class="article-info clearfix">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+  
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
   <h1 itemprop="name">
     
       <a href="/2015/07/02/classpath_jar/" title="classpath中没用到的jar的影响" itemprop="url">classpath中没用到的jar的影响</a>
@@ -88,9 +90,16 @@
     
   </p>
 </header>
-    <div class="article-content">
-        
-        <p>有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。<br>通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">jzfile *  ZIP_Put_In_Cache0(<span class="keyword">const</span> <span class="keyword">char</span> *name, ZFILE zfd, <span class="keyword">char</span> **pmsg, jlong lastModified, jboolean usemmap)</span><br></pre></td></tr></table></figure></p>
+	<div class="article-content">
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">文章目录</strong>
+		
+			
+		
+		</div>
+		
+		<p>有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。<br>通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">jzfile *  ZIP_Put_In_Cache0(<span class="keyword">const</span> <span class="keyword">char</span> *name, ZFILE zfd, <span class="keyword">char</span> **pmsg, jlong lastModified, jboolean usemmap)</span><br></pre></td></tr></table></figure></p>
 <p>在这个方法里，调用<code>static jlong readCEN(jzfile *zip, jint knownTotal)</code>方法“读取”了zip的central directory部分，里面关键的一句为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">mappedAddr = mmap64(<span class="number">0</span>, zip-&gt;mlen, PROT_READ, MAP_SHARED, zip-&gt;zfd, (<span class="keyword">off64_t</span>) offset)</span><br></pre></td></tr></table></figure></p>
 <p>即：将zip的 central directory部分进行了文件映射。上文中“读取”两字，我加了引号，就是因为并不是真正的读取了这块儿内容，而是采用文件映射的方式，将文件的这部分内容映射进了内存空间。这个方法里有一处值得我们注意，即是用了MAP_SHARED参数，即这一块儿空间是和其他进程共享的。<br>在JDK6之前，map了这个jar文件，这样占用了大量的地址空间（并没有占用内存），所以改为只映射 central directory，因为 central directory中包含检索包含文件的全部信息。<br>通过pmap，我们可以看到内存映射：</p>
 <blockquote>
@@ -101,14 +110,9 @@
 <li>classpath包含的jar，会把 central directory映射到内存中去，在load class时会进行访问，所以会占用内存。如果jar文件较多，而且比较大，也会占用不少空间。</li>
 <li>对于一台主机上的不同java进程，引用相同的jar，最好使用同一个文件，这样会共享同一块内存，减少内存占用。</li>
 </ul>
-
-        
-        
-        <p class="article-more-link">
-          
-       </p>
-    </div>
-    <footer class="article-footer clearfix">
+  
+	</div>
+		<footer class="article-footer clearfix">
 <div class="article-catetags">
 
 
@@ -121,156 +125,43 @@
 
 
 
-
-<div class="comments-count">
+	<div class="article-share" id="share">
 	
-</div>
+	  <div data-url="http://jangzq.info/2015/07/02/classpath_jar/" data-title="classpath中没用到的jar的影响 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  </div>
+	
+	</div>
+
 
 </footer>
 
-
-    </article>
-
-
-
-
-
-
-   
-    
-    <article class="post-expand post" itemprop="articleBody"> 
-        <header class="article-info clearfix">
-  <h1 itemprop="name">
-    
-      <a href="/2015/06/28/tlab/" title="HotSpot的TLAB实现解析" itemprop="url">HotSpot的TLAB实现解析</a>
-  </h1>
-  <p class="article-author">By
-       
-		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
-		
-  <p class="article-time">
-    <time datetime="2015-06-28T09:12:50.000Z" itemprop="datePublished"> 发表于 2015-06-28</time>
-    
-  </p>
-</header>
-    <div class="article-content">
-        
-        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>本文解析了TLAB的实现机制，最后讨论了如何利用TLAB机制，进行高效程序设计，如果你对原理不感兴趣，也请看下<strong>启示</strong>部分。</p>
-<p>内存分配是虚拟机最常见的操作之一，所以处理效率高低对整体性能有很大的影响。同时，虚拟机是一个多线程的运行环境，内存分配也不可避免的受到并发的制约，而锁又是造成性能下降的主因之一，即使使用CAS，对于如此频繁的操作也是巨大的性能负担。<br>一个自然而然的想法是将内存分为几个部分，每个线程只使用自己的内存区域，这样内存分配就不用进行同步，当然能达到较高的效率，TLAB就是这种想法的产物。每一个线程都有自己的一片内存区域，这片区域就叫<strong>TLAB(Thread Local alloc Buffer)</strong>，虚拟机的任务就是合理的分配TLAB的大小，使内存分配都尽量在TLAB中完成，以达到更高的效率。</p>
-<h2 id="TLAB机制解析">TLAB机制解析</h2><p>hotspot用Thread类（Thread.cpp，不是java类）来描述一个线程，在Thread类里有一个<code>ThreadLocalAllocBuffer _tlab</code>变量，表征这个线程的tlab。在ThreadLocalAllocBuffer 类里，有三个属性描述了tlab的范围及使用情况，<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* _start;      <span class="comment">//当前tlab的起始地址</span></span><br><span class="line">HeapWord* <span class="keyword">_t</span>op;        <span class="comment">//最后一次在tlab上分配内存后的指针位置。</span></span><br><span class="line">HeapWord* _end;       <span class="comment">//tlab的结束地址。</span></span><br></pre></td></tr></table></figure></p>
-<p>采用这样的方法，首先要考虑，给每个线程的TLAB分配多大空间。分配大了，别的线程又无法使用，造成了浪费；分配小了，剩余的空间不够分配的时候，还需要采用别的方式分配。每个线程需要分配的内存是不同的，有的线程需要分配的内存多，有的现场分配的内存少，给所有线程分配同样大小的TLAB空间显然是不适合的。另外，一个线程不同的时间可能有不同的内存要求，这段时间使用内存多，过一会儿又少了，所以给一个线程固定的TLAB空间显然也是不适合的。也就是，需要解决下面两个问题：1）一个线程的TLAB初始时分配多大。2）什么时候进行动态调整，调整成多大。本文将围绕这两个问题，深入hotspot源码，探究答案。</p>
-<h3 id="初始分配">初始分配</h3>
-        
-        
-        <p class="article-more-link">
-          
-            <a href="/2015/06/28/tlab/#more">Read More</a>
-          
-       </p>
-    </div>
-    <footer class="article-footer clearfix">
-<div class="article-catetags">
-
-
-  <div class="article-tags">
-  
-  <span></span> <a href="/tags/jvm/">jvm</a>
-  </div>
-
-</div>
-
-
-
-
-<div class="comments-count">
+   	       
+	</article>
 	
+<nav class="article-nav clearfix">
+ 
+
+<div class="next">
+<a href="/2015/06/28/tlab/"  title="HotSpot的TLAB实现解析">
+ <strong>下一篇：</strong><br/> 
+ <span>HotSpot的TLAB实现解析
+</span>
+</a>
 </div>
 
-</footer>
+</nav>
 
-
-    </article>
-
-
-
-
-
-
-   
-    
-    <article class="post-expand post" itemprop="articleBody"> 
-        <header class="article-info clearfix">
-  <h1 itemprop="name">
-    
-      <a href="/2015/06/27/overcommit_memory/" title="overcommit_memory深入解析" itemprop="url">overcommit_memory深入解析</a>
-  </h1>
-  <p class="article-author">By
-       
-		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
-		
-  <p class="article-time">
-    <time datetime="2015-06-27T15:32:52.000Z" itemprop="datePublished"> 发表于 2015-06-27</time>
-    
-  </p>
-</header>
-    <div class="article-content">
-        
-        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>本文从内核角度分析了内核参数<code>overcommit_memory</code>的影响，并给出了如何应用此参数的建议意见。</p>
-<h2 id="实例">实例</h2><p>首先，从一个实例开始：<br><strong>操作系统： </strong></p>
-<blockquote>
-<p>linux 2.6.38</p>
-</blockquote>
-<p><strong>JDK版本：</strong></p>
-<blockquote>
-<p>java version “1.6.0_30”<br>Java(TM) SE Runtime Environment (build 1.6.0_30-b12)<br>Java HotSpot(TM) 64-Bit Server VM (build 20.5-b03, mixed mode)</p>
-</blockquote>
-<p>现象：启动java进程的时候，报如下的错误后退出</p>
-<blockquote>
-<p>Error occurred during initialization of VM<br>Could not reserve enough space for object heap<br>Could not create the Java virtual machine.</p>
-</blockquote>
-<p>疑惑：粗略的考虑一下，linux是使用虚拟内存的，而且linux分配给进程内存时候，只是分配一个地址空间，并不是马上分配内存，那么是什么限制导致了java虚拟机在初始化的时候即退出呢?</p>
-<h2 id="解析">解析</h2><p>首先，我们看一下java虚拟机是用什么系统调用来请求内存？<br>java虚拟机使用-Xms 和-Xmx指出java的堆的初始大小和最大大小，在java进程启动的时候，java虚拟机按照初始大小请求内存，但是虚拟机是用什么来请求内存呢？我们使用strace来看一下（我们使用 -Xms1G -Xmx1G的参数启动）：<br>得到如下输出<br>
-        
-        
-        <p class="article-more-link">
-          
-            <a href="/2015/06/27/overcommit_memory/#more">Read More</a>
-          
-       </p>
-    </div>
-    <footer class="article-footer clearfix">
-<div class="article-catetags">
-
-
-  <div class="article-tags">
-  
-  <span></span> <a href="/tags/linux内核/">linux内核</a>
-  </div>
-
-</div>
-
-
-
-
-<div class="comments-count">
 	
-</div>
 
-</footer>
-
-
-    </article>
-
-
-
-
-
-
-
-</div>
+</div>  
       <div class="openaside"><a class="navbutton" href="#" title="显示侧边栏"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">文章目录</strong>
+ 
+ 
+ 
+  </div>
 
 <div id="asidepart">
 <div class="closeaside"><a class="closebutton" href="#" title="隐藏侧边栏"></a></div>
@@ -382,6 +273,11 @@ $(document).ready(function(){
     o.css("top",Math.max(80,260-$(this).scrollTop()));
   });
   
+        getSize();
+        if (myWidth >= 1024) {
+          c.click();
+        }
+  
   $(window).resize(function(){
     getSize(); 
     if (myWidth >= 1024) {
@@ -390,12 +286,69 @@ $(document).ready(function(){
       m.removeClass('moveMain');
       a.css('display', 'block').removeClass('fadeOut');
       o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
         
     }
   });
 });
 </script>
 
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  c.click(function(){
+    ta.css('display', 'block').addClass('fadeIn');
+  });
+  o.click(function(){
+    ta.css('display', 'none');
+  });
+  $(window).scroll(function(){
+    ta.css("top",Math.max(140,320-$(this).scrollTop()));
+  });
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#nothing"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="微信"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="微博"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
 
 
 
@@ -461,4 +414,4 @@ document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3
 <!-- Tiny_search End -->
 
   </body>
- </html>
+</html>

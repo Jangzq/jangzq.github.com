@@ -5,7 +5,7 @@
   <subtitle><![CDATA[关注代码的秘密， 记录探索点滴， 分享技术收获]]></subtitle>
   <link href="/atom.xml" rel="self"/>
   <link href="http://jangzq.info//"/>
-  <updated>2015-06-28T09:12:59.000Z</updated>
+  <updated>2015-07-02T13:28:07.000Z</updated>
   <id>http://jangzq.info//</id>
   
   <author>
@@ -14,6 +14,32 @@
   </author>
   
   <generator uri="http://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title><![CDATA[classpath中没用到的jar的影响]]></title>
+    <link href="http://jangzq.info/2015/07/02/classpath_jar/"/>
+    <id>http://jangzq.info/2015/07/02/classpath_jar/</id>
+    <published>2015-07-02T13:19:16.000Z</published>
+    <updated>2015-07-02T13:28:07.000Z</updated>
+    <content type="html"><![CDATA[<p>有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。<br>通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">jzfile *  ZIP_Put_In_Cache0(<span class="keyword">const</span> <span class="keyword">char</span> *name, ZFILE zfd, <span class="keyword">char</span> **pmsg, jlong lastModified, jboolean usemmap)</span><br></pre></td></tr></table></figure></p>
+<p>在这个方法里，调用<code>static jlong readCEN(jzfile *zip, jint knownTotal)</code>方法“读取”了zip的central directory部分，里面关键的一句为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">mappedAddr = mmap64(<span class="number">0</span>, zip-&gt;mlen, PROT_READ, MAP_SHARED, zip-&gt;zfd, (<span class="keyword">off64_t</span>) offset)</span><br></pre></td></tr></table></figure></p>
+<p>即：将zip的 central directory部分进行了文件映射。上文中“读取”两字，我加了引号，就是因为并不是真正的读取了这块儿内容，而是采用文件映射的方式，将文件的这部分内容映射进了内存空间。这个方法里有一处值得我们注意，即是用了MAP_SHARED参数，即这一块儿空间是和其他进程共享的。<br>在JDK6之前，map了这个jar文件，这样占用了大量的地址空间（并没有占用内存），所以改为只映射 central directory，因为 central directory中包含检索包含文件的全部信息。<br>通过pmap，我们可以看到内存映射：</p>
+<blockquote>
+<p>00007f7bb818a000  63960K ——-   [ anon ]<br>00007f7bbc00a000      8K r—s- axis-ant-1.2.1.jar<br>00007f7bbc00c000      8K r—s- asm-attrs.jar<br>00007f7bbc00e000     20K r—s- antlr-2.7.6rc1.jar<br>00007f7bbc013000     28K r—s- ant-1.4.1.jar<br>00007f7bbc01a000     52K r—s- acegi-security-1.0.7.jar<br>00007f7bbc027000     44K r—s- charsets.jar<br>00007f7bbc032000   5968K rw—-   [ anon ]<br>00007f7bbc606000   1788K r—s- rt.jar<br>00007f7bbc7c5000   5264K rw—-   [ anon ]</p>
+</blockquote>
+<p>通过上述分析，我们可以得到如下结论：</p>
+<ul>
+<li>classpath包含的jar，会把 central directory映射到内存中去，在load class时会进行访问，所以会占用内存。如果jar文件较多，而且比较大，也会占用不少空间。</li>
+<li>对于一台主机上的不同java进程，引用相同的jar，最好使用同一个文件，这样会共享同一块内存，减少内存占用。</li>
+</ul>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p>有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。<br>通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。<br><figure class="highlight c"><table><tr><td c]]>
+    </summary>
+    
+      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
+    
+  </entry>
   
   <entry>
     <title><![CDATA[HotSpot的TLAB实现解析]]></title>

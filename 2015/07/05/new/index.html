@@ -1,0 +1,449 @@
+
+ <!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  
+    <title>通过解释器的new操作看内存分配 | Jangzq技术研究</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="Zhang Zq">
+    
+
+    
+    <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+注：未特殊说明，都指的是JDK7.0
+了解hotspot的内存分配流程，TemplateTable::_new方法是个比较好的入口，这个方法生成了供以后解释执行时使用的汇编代码。从这个方法入手，可以了解hotspot创建对象所需要的操作，对我们开发应用程序时，进行内存管理设计有很大的帮助。
+概述新建一个对象，有三种方式。
+
+在TLAB">
+<meta property="og:type" content="article">
+<meta property="og:title" content="通过解释器的new操作看内存分配">
+<meta property="og:url" content="http://jangzq.info/2015/07/05/new/index.html">
+<meta property="og:site_name" content="Jangzq技术研究">
+<meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+注：未特殊说明，都指的是JDK7.0
+了解hotspot的内存分配流程，TemplateTable::_new方法是个比较好的入口，这个方法生成了供以后解释执行时使用的汇编代码。从这个方法入手，可以了解hotspot创建对象所需要的操作，对我们开发应用程序时，进行内存管理设计有很大的帮助。
+概述新建一个对象，有三种方式。
+
+在TLAB">
+<meta property="og:updated_time" content="2015-07-04T16:30:24.000Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="通过解释器的new操作看内存分配">
+<meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+注：未特殊说明，都指的是JDK7.0
+了解hotspot的内存分配流程，TemplateTable::_new方法是个比较好的入口，这个方法生成了供以后解释执行时使用的汇编代码。从这个方法入手，可以了解hotspot创建对象所需要的操作，对我们开发应用程序时，进行内存管理设计有很大的帮助。
+概述新建一个对象，有三种方式。
+
+在TLAB">
+
+    
+    <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+</head>
+
+  <body>
+    <header>
+      
+<div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="Jangzq技术研究">Jangzq技术研究</a></h1>
+				<h2 class="blog-motto">关注代码的秘密， 记录探索点滴， 分享技术收获</h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="菜单">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">主页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于我</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="搜索" />
+						<input type="hidden" name="q" value="site:jangzq.info">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+  
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/07/05/new/" title="通过解释器的new操作看内存分配" itemprop="url">通过解释器的new操作看内存分配</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-04T16:13:29.000Z" itemprop="datePublished"> 发表于 2015-07-05</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">文章目录</strong>
+		
+			<ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#概述"><span class="toc-number">1.</span> <span class="toc-text">概述</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#源码解析"><span class="toc-number">2.</span> <span class="toc-text">源码解析</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#得到类的大小"><span class="toc-number">2.1.</span> <span class="toc-text">得到类的大小</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#TLAB分配"><span class="toc-number">2.2.</span> <span class="toc-text">TLAB分配</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Shared_eden快速分配"><span class="toc-number">2.3.</span> <span class="toc-text">Shared eden快速分配</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#初始化对象和头"><span class="toc-number">2.4.</span> <span class="toc-text">初始化对象和头</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#慢速分配"><span class="toc-number">2.5.</span> <span class="toc-text">慢速分配</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#TLAB分配-1"><span class="toc-number">2.5.1.</span> <span class="toc-text">TLAB分配</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#CollectedHeap分配"><span class="toc-number">2.5.2.</span> <span class="toc-text">CollectedHeap分配</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#内存溢出处理"><span class="toc-number">2.5.3.</span> <span class="toc-text">内存溢出处理</span></a></li></ol></li></ol></li></ol>
+		
+		</div>
+		
+		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
+<p>了解hotspot的内存分配流程，TemplateTable::_new方法是个比较好的入口，这个方法生成了供以后解释执行时使用的汇编代码。从这个方法入手，可以了解hotspot创建对象所需要的操作，对我们开发应用程序时，进行内存管理设计有很大的帮助。</p>
+<h2 id="概述">概述</h2><p>新建一个对象，有三种方式。</p>
+<ol>
+<li><p>在TLAB中分配<br>如果<code>UseTLAB</code>为真（缺省是true），就先进行TLAB分配，本部分的内容在<a href="http://jangzq.info/2015/06/28/tlab/">《HotSpot的TLAB实现解析》</a>一文里也进行了简单的说明，本文后面详细说明。</p>
+</li>
+<li><p>在shared eden中快速分配。<br>TLAB是eden中的每个线程自己使用的部分，shared eden就是共享的部分。当在TLAB中分配失败后，也就是TLAB中的内存大小不够时，就有可能在shared eden中分配。之所以是有可能，是需要满足以下的条件。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> <span class="keyword">bool</span> allow_shared_alloc =</span><br><span class="line">   Universe::heap()-&gt;supports_inline_contig_alloc() &amp;&amp; !CMSIncrementalMode</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p><code>supports_inline_contig_alloc</code>与具体的<code>CollectedHeap</code>有关，也就是必须满足，在堆中必须有一块儿连续的空间，可用范围由<code>top_addr()</code>，<code>end_addr()</code>决定的，并且可以靠移动<code>top_addr</code>来分配内存。<br><code>CMSIncrementalMode</code>是增量CMS模式，当设置了增量CMS模式时，不允许在share eden中快速分配。</p>
+<ol>
+<li>慢速路径<br>调用<code>InterpreterRuntime::_new</code>进行分配。当类没有解析或者初始化时，还有上面的两种分配方式都不成功的时候，进入慢速模式。</li>
+</ol>
+<h2 id="源码解析">源码解析</h2><a id="more"></a>
+<h3 id="得到类的大小">得到类的大小</h3><p>要分配内存，首先要知道大小，所以通过下面的操作得到类的大小。<br>首先判断这个类的符号连接在常量池里是否已经解析，没有解析的话，就不能走快速路径了。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">__ <span class="keyword">get_cpool_and_t</span>ags(rsi, rax); <span class="comment">//rsi指向了常量池地址，rax指向了常量池的tags。</span></span><br><span class="line"><span class="keyword">const</span> <span class="keyword">int</span> tags_offset = typeArrayOopDesc::header_size(T_BYTE) * wordSize;</span><br><span class="line">__ cmpb(Address(rax, rdx, Address::times_1, tags_offset),</span><br><span class="line">        JVM_CONSTANT_Class);</span><br><span class="line">__ jcc(Assembler::notEqual, slow_case);</span><br></pre></td></tr></table></figure></p>
+<p>得到instanceKlass，并且判断是否初始化，如果没有初始化，也不能走快速路径。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">__ movptr(rsi, Address(rsi, rdx,</span><br><span class="line">          Address::times_8, <span class="keyword">sizeof</span>(constantPoolOopDesc)));</span><br><span class="line"></span><br><span class="line"><span class="comment">// make sure klass is initialized &amp; doesn't have finalizer</span></span><br><span class="line"><span class="comment">// make sure klass is fully initialized</span></span><br><span class="line">__ cmpb(Address(rsi,</span><br><span class="line">                instanceKlass::init_state_offset()),</span><br><span class="line">        instanceKlass::fully_initialized);</span><br><span class="line">__ jcc(Assembler::notEqual, slow_case);</span><br></pre></td></tr></table></figure></p>
+<p>注：解析和初始化的概念请参考《java虚拟机规范》。<br>当分配的是普通类对象（非数组）时， 如果klass::_layout_helper为正数，这个值就是对象的大小。如果最低位为1的话，则说明不能应用快速路径。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// get instance_size in instanceKlass (scaled to a count of bytes)</span></span><br><span class="line"> __ movl(rdx,</span><br><span class="line">         Address(rsi,</span><br><span class="line">                 Klass::layout_helper_offset()));</span><br><span class="line"> <span class="comment">// test to see if it has a finalizer or is malformed in some way</span></span><br><span class="line"> __ testl(rdx, Klass::_lh_instance_slow_path_bit);</span><br><span class="line"> __ jcc(Assembler::notZero, slow_case);</span><br></pre></td></tr></table></figure></p>
+<p>经过以上步骤，对象的大小已经放在了rdx寄存器中，下面进行内存分配。</p>
+<h3 id="TLAB分配">TLAB分配</h3><p>如果<code>UseTLAB</code>为真（缺省是true），就先进行TLAB分配。<br>首先，尝试直接修改TLAB的当前指针分配。当前线程的TLAB当前待分配指针存放在<code>JavaThread</code>的<code>tlab_top_offset</code>属性里，而r15指向了当前线程的<code>JavaThread</code>，所以首先将其存放到rax里，然后加上前面得到的对象大小，得到如果在TLAB里分配，指针的位置。然后比较这个位置和当前tlab的最大指针，如果超出了这个位置，说明tlab里的空间不足以分配这个对象，否则移动tlab的当前指针。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">__ movptr(rax, Address(<span class="keyword">r15_t</span>hread, in_bytes(JavaThread::<span class="keyword">tlab_t</span>op_offset())));</span><br><span class="line"> __ lea(rbx, Address(rax, rdx, Address::times_1));</span><br><span class="line"> __ cmpptr(rbx, Address(<span class="keyword">r15_t</span>hread, in_bytes(JavaThread::tlab_end_offset())));</span><br><span class="line"> __ jcc(Assembler::above, allow_shared_alloc ? allocate_shared : slow_case);</span><br><span class="line"> __ movptr(Address(<span class="keyword">r15_t</span>hread, in_bytes(JavaThread::<span class="keyword">tlab_t</span>op_offset())), rbx);</span><br></pre></td></tr></table></figure></p>
+<p>从上面代码中可以看出，如果没空间，根据是否允许在share eden中快速分配，选择 allocate_shared，或者慢速路径。<br>如果设置了ZeroTLAB,则分配的内存已经全置为0了，就不需要初始化对象，只需要初始化header。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (ZeroTLAB) &#123;</span><br><span class="line">      <span class="comment">// the fields have been already cleared</span></span><br><span class="line">      __ jmp(initialize_header);</span><br><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">      <span class="comment">// initialize both the header and fields</span></span><br><span class="line">      __ jmp(initialize_object);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h3 id="Shared_eden快速分配">Shared eden快速分配</h3><p>由于shared eden是共享的，所以不能直接移动指针分配，需要保护机制。在x86_64里，采用的是<code>cmpxchg</code>指令。<br>首先， 比较shared eden的当前指针+对象大小，是否超过了shared eden的范围，如果超过了，只好去慢速路径。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">__ lea(rbx, Address(rax, rdx, Address::times_1));</span><br><span class="line"> __ cmpptr(rbx, Address(RendAddr, <span class="number">0</span>));</span><br><span class="line"> __ jcc(Assembler::above, slow_case);</span><br></pre></td></tr></table></figure></p>
+<p>然后， 用cas修改当前指针的地址。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (os::is_MP()) &#123;</span><br><span class="line">    __ lock();</span><br><span class="line">&#125;</span><br><span class="line">__ cmpxchgptr(rbx, Address(RtopAddr, <span class="number">0</span>));</span><br><span class="line"></span><br><span class="line"><span class="comment">// if someone beat us on the allocation, try again, otherwise continue</span></span><br><span class="line">__ jcc(Assembler::notEqual, retry);</span><br></pre></td></tr></table></figure></p>
+<p><code>__ lock()</code>方法生成lock前缀， 然后使用<code>cmpxchg</code>，给当前top指针赋值。具体含义为：因为现在rax中存放的是根据当前的top地址计算的object的起始地址，rbx存放的是object的结束地址，当内存中的rtopaddr处的内容等于rax时，将rbx的内容存入内存的这个地方，否则的话，说明别的线程已经改了这个地址的内存，这时将内存此处的值放入rax，以上操作是原子的。当修改失败的时候，需要重试。</p>
+<h3 id="初始化对象和头">初始化对象和头</h3><p>初始化对象，即将对象全部清0。<br>初始化头，即初始化对象前面的oopDesc。</p>
+<h3 id="慢速分配">慢速分配</h3><p>入口为：<code>InterpreterRuntime::_new</code>。<br>首先，检查类是否已经解析和初始化，然后进入实质分配内存部分：<code>CollectedHeap::common_mem_allocate_noinit</code>。</p>
+<h4 id="TLAB分配-1">TLAB分配</h4><p>首先在tlab中分配。这里面可以扩展新的TLAB空间，《HotSpot的TLAB实现解析》里描述的比较详细，请参考。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (UseTLAB) &#123;</span><br><span class="line">  result = <span class="keyword">allocate_from_t</span>lab(klass, THREAD, size);</span><br><span class="line">  <span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">    assert(!HAS_PENDING_EXCEPTION,</span><br><span class="line">           <span class="string">"Unexpected exception, will result in uninitialized storage"</span>);</span><br><span class="line">    <span class="keyword">return</span> result;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="CollectedHeap分配">CollectedHeap分配</h4><p>分配不成功，调用当前<code>CollectedHeap</code>的<code>mem_allocate</code>方法，这个是个虚函数，由具体的子类实现。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">result = Universe::heap()-&gt;mem_allocate(size,</span><br><span class="line">                                        &amp;gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure></p>
+<p>详细描述在另外单独文章描述，请关注<a href="http://jangzq.info/">Jangzq技术研究</a>。</p>
+<h4 id="内存溢出处理">内存溢出处理</h4><p>当还没有分配成功，这时就需要报告内存溢出。<br>详细描述在另外单独文章描述，请关注<a href="http://jangzq.info/">Jangzq技术研究</a>。</p>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+	<div class="article-share" id="share">
+	
+	  <div data-url="http://jangzq.info/2015/07/05/new/" data-title="通过解释器的new操作看内存分配 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  </div>
+	
+	</div>
+
+
+</footer>
+
+   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+
+<div class="next">
+<a href="/2015/07/03/CollectedHeapCollectorPolicy/"  title="垃圾收集框架：CollectedHeap和CollectorPolicy">
+ <strong>下一篇：</strong><br/> 
+ <span>垃圾收集框架：CollectedHeap和CollectorPolicy
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="显示侧边栏"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">文章目录</strong>
+ 
+ <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#概述"><span class="toc-number">1.</span> <span class="toc-text">概述</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#源码解析"><span class="toc-number">2.</span> <span class="toc-text">源码解析</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#得到类的大小"><span class="toc-number">2.1.</span> <span class="toc-text">得到类的大小</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#TLAB分配"><span class="toc-number">2.2.</span> <span class="toc-text">TLAB分配</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Shared_eden快速分配"><span class="toc-number">2.3.</span> <span class="toc-text">Shared eden快速分配</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#初始化对象和头"><span class="toc-number">2.4.</span> <span class="toc-text">初始化对象和头</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#慢速分配"><span class="toc-number">2.5.</span> <span class="toc-text">慢速分配</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#TLAB分配-1"><span class="toc-number">2.5.1.</span> <span class="toc-text">TLAB分配</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#CollectedHeap分配"><span class="toc-number">2.5.2.</span> <span class="toc-text">CollectedHeap分配</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#内存溢出处理"><span class="toc-number">2.5.3.</span> <span class="toc-text">内存溢出处理</span></a></li></ol></li></ol></li></ol>
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="隐藏侧边栏"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+<div class="tagslist">
+	<p class="asidetitle">标签</p>
+		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>4</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>1</sup></a></li>
+			
+		
+		</ul>
+</div>
+
+
+  <div class="linkslist">
+  <p class="asidetitle">友情链接</p>
+    <ul>
+        
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS 订阅</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	
+	<section class="info">
+		<p> Jangzq&#39;s blog <br/>
+			Focus on the secret of code!</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		<a href="http://weibo.com/Jangzq" target="_blank" class="icon-weibo" title="微博"></a>
+		
+		
+		<a href="https://github.com/Jangzq" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:zqzhangmail@163.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+			
+		
+
+		<p class="copyright">
+		Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Jacman">Jacman</a> © 2015 
+		
+		<a href="/about" target="_blank" title="Zhang Zq">Zhang Zq</a>
+		
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script src="/js/jquery.imagesloaded.min.js"></script>
+<script src="/js/gallery.js"></script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+  
+        getSize();
+        if (myWidth >= 1024) {
+          c.click();
+        }
+  
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else{
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  c.click(function(){
+    ta.css('display', 'block').addClass('fadeIn');
+  });
+  o.click(function(){
+    ta.css('display', 'none');
+  });
+  $(window).scroll(function(){
+    ta.css("top",Math.max(140,320-$(this).scrollTop()));
+  });
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#nothing"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="微信"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="微博"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+<!-- Analytics Begin -->
+
+
+
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3F435d1985a249fde8415798105b4f848b' type='text/javascript'%3E%3C/script%3E"));
+</script>
+
+
+
+<!-- Analytics End -->
+
+<!-- Totop Begin -->
+
+	<div id="totop">
+	<a title="返回顶部"><img src="/img/scrollup.png"/></a>
+	</div>
+	<script src="/js/totop.js"></script>
+
+<!-- Totop End -->
+
+<!-- MathJax Begin -->
+<!-- mathjax config similar to math.stackexchange -->
+
+
+<!-- MathJax End -->
+
+<!-- Tiny_search Begin -->
+
+<!-- Tiny_search End -->
+
+  </body>
+</html>

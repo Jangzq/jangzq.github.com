@@ -5,7 +5,7 @@
   <subtitle><![CDATA[关注代码的秘密， 记录探索点滴， 分享技术收获]]></subtitle>
   <link href="/atom.xml" rel="self"/>
   <link href="http://jangzq.info//"/>
-  <updated>2015-07-02T13:28:07.000Z</updated>
+  <updated>2015-07-04T16:30:24.000Z</updated>
   <id>http://jangzq.info//</id>
   
   <author>
@@ -14,6 +14,235 @@
   </author>
   
   <generator uri="http://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title><![CDATA[通过解释器的new操作看内存分配]]></title>
+    <link href="http://jangzq.info/2015/07/05/new/"/>
+    <id>http://jangzq.info/2015/07/05/new/</id>
+    <published>2015-07-04T16:13:29.000Z</published>
+    <updated>2015-07-04T16:30:24.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
+<p>了解hotspot的内存分配流程，TemplateTable::_new方法是个比较好的入口，这个方法生成了供以后解释执行时使用的汇编代码。从这个方法入手，可以了解hotspot创建对象所需要的操作，对我们开发应用程序时，进行内存管理设计有很大的帮助。</p>
+<h2 id="概述">概述</h2><p>新建一个对象，有三种方式。</p>
+<ol>
+<li><p>在TLAB中分配<br>如果<code>UseTLAB</code>为真（缺省是true），就先进行TLAB分配，本部分的内容在<a href="http://jangzq.info/2015/06/28/tlab/">《HotSpot的TLAB实现解析》</a>一文里也进行了简单的说明，本文后面详细说明。</p>
+</li>
+<li><p>在shared eden中快速分配。<br>TLAB是eden中的每个线程自己使用的部分，shared eden就是共享的部分。当在TLAB中分配失败后，也就是TLAB中的内存大小不够时，就有可能在shared eden中分配。之所以是有可能，是需要满足以下的条件。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> <span class="keyword">bool</span> allow_shared_alloc =</span><br><span class="line">   Universe::heap()-&gt;supports_inline_contig_alloc() &amp;&amp; !CMSIncrementalMode</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p><code>supports_inline_contig_alloc</code>与具体的<code>CollectedHeap</code>有关，也就是必须满足，在堆中必须有一块儿连续的空间，可用范围由<code>top_addr()</code>，<code>end_addr()</code>决定的，并且可以靠移动<code>top_addr</code>来分配内存。<br><code>CMSIncrementalMode</code>是增量CMS模式，当设置了增量CMS模式时，不允许在share eden中快速分配。</p>
+<ol>
+<li>慢速路径<br>调用<code>InterpreterRuntime::_new</code>进行分配。当类没有解析或者初始化时，还有上面的两种分配方式都不成功的时候，进入慢速模式。</li>
+</ol>
+<h2 id="源码解析">源码解析</h2><a id="more"></a>
+<h3 id="得到类的大小">得到类的大小</h3><p>要分配内存，首先要知道大小，所以通过下面的操作得到类的大小。<br>首先判断这个类的符号连接在常量池里是否已经解析，没有解析的话，就不能走快速路径了。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">__ <span class="keyword">get_cpool_and_t</span>ags(rsi, rax); <span class="comment">//rsi指向了常量池地址，rax指向了常量池的tags。</span></span><br><span class="line"><span class="keyword">const</span> <span class="keyword">int</span> tags_offset = typeArrayOopDesc::header_size(T_BYTE) * wordSize;</span><br><span class="line">__ cmpb(Address(rax, rdx, Address::times_1, tags_offset),</span><br><span class="line">        JVM_CONSTANT_Class);</span><br><span class="line">__ jcc(Assembler::notEqual, slow_case);</span><br></pre></td></tr></table></figure></p>
+<p>得到instanceKlass，并且判断是否初始化，如果没有初始化，也不能走快速路径。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">__ movptr(rsi, Address(rsi, rdx,</span><br><span class="line">          Address::times_8, <span class="keyword">sizeof</span>(constantPoolOopDesc)));</span><br><span class="line"></span><br><span class="line"><span class="comment">// make sure klass is initialized &amp; doesn't have finalizer</span></span><br><span class="line"><span class="comment">// make sure klass is fully initialized</span></span><br><span class="line">__ cmpb(Address(rsi,</span><br><span class="line">                instanceKlass::init_state_offset()),</span><br><span class="line">        instanceKlass::fully_initialized);</span><br><span class="line">__ jcc(Assembler::notEqual, slow_case);</span><br></pre></td></tr></table></figure></p>
+<p>注：解析和初始化的概念请参考《java虚拟机规范》。<br>当分配的是普通类对象（非数组）时， 如果klass::_layout_helper为正数，这个值就是对象的大小。如果最低位为1的话，则说明不能应用快速路径。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// get instance_size in instanceKlass (scaled to a count of bytes)</span></span><br><span class="line"> __ movl(rdx,</span><br><span class="line">         Address(rsi,</span><br><span class="line">                 Klass::layout_helper_offset()));</span><br><span class="line"> <span class="comment">// test to see if it has a finalizer or is malformed in some way</span></span><br><span class="line"> __ testl(rdx, Klass::_lh_instance_slow_path_bit);</span><br><span class="line"> __ jcc(Assembler::notZero, slow_case);</span><br></pre></td></tr></table></figure></p>
+<p>经过以上步骤，对象的大小已经放在了rdx寄存器中，下面进行内存分配。</p>
+<h3 id="TLAB分配">TLAB分配</h3><p>如果<code>UseTLAB</code>为真（缺省是true），就先进行TLAB分配。<br>首先，尝试直接修改TLAB的当前指针分配。当前线程的TLAB当前待分配指针存放在<code>JavaThread</code>的<code>tlab_top_offset</code>属性里，而r15指向了当前线程的<code>JavaThread</code>，所以首先将其存放到rax里，然后加上前面得到的对象大小，得到如果在TLAB里分配，指针的位置。然后比较这个位置和当前tlab的最大指针，如果超出了这个位置，说明tlab里的空间不足以分配这个对象，否则移动tlab的当前指针。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">__ movptr(rax, Address(<span class="keyword">r15_t</span>hread, in_bytes(JavaThread::<span class="keyword">tlab_t</span>op_offset())));</span><br><span class="line"> __ lea(rbx, Address(rax, rdx, Address::times_1));</span><br><span class="line"> __ cmpptr(rbx, Address(<span class="keyword">r15_t</span>hread, in_bytes(JavaThread::tlab_end_offset())));</span><br><span class="line"> __ jcc(Assembler::above, allow_shared_alloc ? allocate_shared : slow_case);</span><br><span class="line"> __ movptr(Address(<span class="keyword">r15_t</span>hread, in_bytes(JavaThread::<span class="keyword">tlab_t</span>op_offset())), rbx);</span><br></pre></td></tr></table></figure></p>
+<p>从上面代码中可以看出，如果没空间，根据是否允许在share eden中快速分配，选择 allocate_shared，或者慢速路径。<br>如果设置了ZeroTLAB,则分配的内存已经全置为0了，就不需要初始化对象，只需要初始化header。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (ZeroTLAB) &#123;</span><br><span class="line">      <span class="comment">// the fields have been already cleared</span></span><br><span class="line">      __ jmp(initialize_header);</span><br><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">      <span class="comment">// initialize both the header and fields</span></span><br><span class="line">      __ jmp(initialize_object);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h3 id="Shared_eden快速分配">Shared eden快速分配</h3><p>由于shared eden是共享的，所以不能直接移动指针分配，需要保护机制。在x86_64里，采用的是<code>cmpxchg</code>指令。<br>首先， 比较shared eden的当前指针+对象大小，是否超过了shared eden的范围，如果超过了，只好去慢速路径。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">__ lea(rbx, Address(rax, rdx, Address::times_1));</span><br><span class="line"> __ cmpptr(rbx, Address(RendAddr, <span class="number">0</span>));</span><br><span class="line"> __ jcc(Assembler::above, slow_case);</span><br></pre></td></tr></table></figure></p>
+<p>然后， 用cas修改当前指针的地址。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (os::is_MP()) &#123;</span><br><span class="line">    __ lock();</span><br><span class="line">&#125;</span><br><span class="line">__ cmpxchgptr(rbx, Address(RtopAddr, <span class="number">0</span>));</span><br><span class="line"></span><br><span class="line"><span class="comment">// if someone beat us on the allocation, try again, otherwise continue</span></span><br><span class="line">__ jcc(Assembler::notEqual, retry);</span><br></pre></td></tr></table></figure></p>
+<p><code>__ lock()</code>方法生成lock前缀， 然后使用<code>cmpxchg</code>，给当前top指针赋值。具体含义为：因为现在rax中存放的是根据当前的top地址计算的object的起始地址，rbx存放的是object的结束地址，当内存中的rtopaddr处的内容等于rax时，将rbx的内容存入内存的这个地方，否则的话，说明别的线程已经改了这个地址的内存，这时将内存此处的值放入rax，以上操作是原子的。当修改失败的时候，需要重试。</p>
+<h3 id="初始化对象和头">初始化对象和头</h3><p>初始化对象，即将对象全部清0。<br>初始化头，即初始化对象前面的oopDesc。</p>
+<h3 id="慢速分配">慢速分配</h3><p>入口为：<code>InterpreterRuntime::_new</code>。<br>首先，检查类是否已经解析和初始化，然后进入实质分配内存部分：<code>CollectedHeap::common_mem_allocate_noinit</code>。</p>
+<h4 id="TLAB分配-1">TLAB分配</h4><p>首先在tlab中分配。这里面可以扩展新的TLAB空间，《HotSpot的TLAB实现解析》里描述的比较详细，请参考。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (UseTLAB) &#123;</span><br><span class="line">  result = <span class="keyword">allocate_from_t</span>lab(klass, THREAD, size);</span><br><span class="line">  <span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">    assert(!HAS_PENDING_EXCEPTION,</span><br><span class="line">           <span class="string">"Unexpected exception, will result in uninitialized storage"</span>);</span><br><span class="line">    <span class="keyword">return</span> result;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="CollectedHeap分配">CollectedHeap分配</h4><p>分配不成功，调用当前<code>CollectedHeap</code>的<code>mem_allocate</code>方法，这个是个虚函数，由具体的子类实现。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">result = Universe::heap()-&gt;mem_allocate(size,</span><br><span class="line">                                        &amp;gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure></p>
+<p>详细描述在另外单独文章描述，请关注<a href="http://jangzq.info/">Jangzq技术研究</a>。</p>
+<h4 id="内存溢出处理">内存溢出处理</h4><p>当还没有分配成功，这时就需要报告内存溢出。<br>详细描述在另外单独文章描述，请关注<a href="http://jangzq.info/">Jangzq技术研究</a>。</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
+<p>了解hotspot的内存分配流程，TemplateTable::_new方法是个比较好的入口，这个方法生成了供以后解释执行时使用的汇编代码。从这个方法入手，可以了解hotspot创建对象所需要的操作，对我们开发应用程序时，进行内存管理设计有很大的帮助。</p>
+<h2 id="概述">概述</h2><p>新建一个对象，有三种方式。</p>
+<ol>
+<li><p>在TLAB中分配<br>如果<code>UseTLAB</code>为真（缺省是true），就先进行TLAB分配，本部分的内容在<a href="http://jangzq.info/2015/06/28/tlab/">《HotSpot的TLAB实现解析》</a>一文里也进行了简单的说明，本文后面详细说明。</p>
+</li>
+<li><p>在shared eden中快速分配。<br>TLAB是eden中的每个线程自己使用的部分，shared eden就是共享的部分。当在TLAB中分配失败后，也就是TLAB中的内存大小不够时，就有可能在shared eden中分配。之所以是有可能，是需要满足以下的条件。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> <span class="keyword">bool</span> allow_shared_alloc =</span><br><span class="line">   Universe::heap()-&gt;supports_inline_contig_alloc() &amp;&amp; !CMSIncrementalMode</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p><code>supports_inline_contig_alloc</code>与具体的<code>CollectedHeap</code>有关，也就是必须满足，在堆中必须有一块儿连续的空间，可用范围由<code>top_addr()</code>，<code>end_addr()</code>决定的，并且可以靠移动<code>top_addr</code>来分配内存。<br><code>CMSIncrementalMode</code>是增量CMS模式，当设置了增量CMS模式时，不允许在share eden中快速分配。</p>
+<ol>
+<li>慢速路径<br>调用<code>InterpreterRuntime::_new</code>进行分配。当类没有解析或者初始化时，还有上面的两种分配方式都不成功的时候，进入慢速模式。</li>
+</ol>
+<h2 id="源码解析">源码解析</h2>]]>
+    
+    </summary>
+    
+      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[垃圾收集框架：CollectedHeap和CollectorPolicy]]></title>
+    <link href="http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/"/>
+    <id>http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/</id>
+    <published>2015-07-03T14:10:27.000Z</published>
+    <updated>2015-07-05T11:38:10.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
+<p>hotspot的垃圾收集框架有两个主要的组成部分，其一是CollectedHeap、其一是CollectorPolicy。根据不同的启动参数，hotspot选择相应的Heap和Policy。<br>首先我们看一下类图，看一下有多少种CollectedHeap和CollectorPolicy。</p>
+<p><img src="/images/heap_policy.png" alt="类图"></p>
+<p>下面列出的是CollectorPolicy和CollectedHeap的关键属性和方法，我们以此来看一下Policy和Heap各自的特性。</p>
+<h2 id="CollectedHeap">CollectedHeap</h2><p>CollectedHeap是java堆在hotspot中的体现，根据垃圾收集算法的不同，具有不同类型的子类，CollectedHeap的主要功能是分配内存，在这个父类里实现的主要是分配的流程，包括TLAB、其它分配等。但是不负责真正的内存分配，因为内存是由其子类管理，所以只定义这些分配的抽象方法。</p>
+<p><strong>属性</strong><br><a id="more"></a></p>
+<ul>
+<li><p>MemRegion _reserved<br>描述地址空间中一块儿连续的区域，由子类负责初始化、使用。</p>
+</li>
+<li><p>uint _n_par_threads<br>并行线程数。</p>
+</li>
+<li><p>GCCause::Cause _gc_cause<br>GC原因</p>
+</li>
+<li><p>GCCause::Cause _gc_lastcause<br>最后一次的GC原因</p>
+</li>
+</ul>
+<p><strong>方法</strong></p>
+<ul>
+<li><p>virtual HeapWord* allocate_new_tlab(size_t size)<br>创建一个新的TLAB，在CollectedHeap中没有实现这个方法，由子类负责实现。</p>
+</li>
+<li><p>inline static HeapWord<em> allocate_from_tlab(KlassHandle klass, Thread</em> thread, size_t size);<br>从TLAB里分配内存，流程如下：<br>首先调用thread对象中的_tlab（类型为：ThreadLocalAllocBuffer）的allocate方法,在TLAB上分配内存，</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = thread-&gt;tlab().allocate(size)</span><br></pre></td></tr></table></figure>
+<p>  如果没有分配成功，调用<code>allocate_from_tlab_slow</code>分配。 </p>
+</li>
+<li><p>static HeapWord<em> allocate_from_tlab_slow(KlassHandle klass, Thread</em> thread, size_t size)<br>  首先判断本TLAB中剩余内存，是否大于可以浪费的内存limit，如果大于，则不能在TLAB中分配</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (thread-&gt;tlab().<span class="built_in">free</span>() &gt; thread-&gt;tlab().refill_waste_limit()) &#123;</span><br><span class="line">   thread-&gt;tlab().record_slow_allocation(size);</span><br><span class="line">   <span class="keyword">return</span> NULL;</span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure>
+<p>  否则，计算新的TLAB的大小，新分配一个TLAB，并且为了遍历对象，把原来分配TLAB没有使用的部分清0。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">size_t</span> <span class="keyword">new_t</span>lab_size = thread-&gt;tlab().compute_size(size);</span><br><span class="line">thread-&gt;tlab().clear_before_allocation();</span><br></pre></td></tr></table></figure>
+<p>  调用<code>allocate_new_tlab</code>分配了TLAB，如果设置了ZeroTLAB，还需要进行清0</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = Universe::heap()-&gt;<span class="keyword">allocate_new_t</span>lab(<span class="keyword">new_t</span>lab_size);</span><br><span class="line"><span class="keyword">if</span> (obj == NULL) &#123;</span><br><span class="line">  <span class="keyword">return</span> NULL;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> (ZeroTLAB) &#123;</span><br><span class="line">  Copy::<span class="keyword">zero_t</span>o_words(obj, <span class="keyword">new_t</span>lab_size);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>  在新的tlab上分配</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">thread-&gt;tlab().fill(obj, obj + size, <span class="keyword">new_t</span>lab_size);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>inline static HeapWord* common_mem_allocate_noinit(KlassHandle klass, size_t size, TRAPS)<br>  分配对象内存。<br>  首先在tlab中分配。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (UseTLAB) &#123;</span><br><span class="line">  result = <span class="keyword">allocate_from_t</span>lab(klass, THREAD, size);</span><br><span class="line">  <span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">    assert(!HAS_PENDING_EXCEPTION,</span><br><span class="line">           <span class="string">"Unexpected exception, will result in uninitialized storage"</span>);</span><br><span class="line">    <span class="keyword">return</span> result;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>  分配不成功，调用当前CollectedHeap的mem_allocate方法，这个是个虚函数，由具体的子类实现。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">result = Universe::heap()-&gt;mem_allocate(size,</span><br><span class="line">                                        &amp;gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure>
+</li>
+</ul>
+<ul>
+<li><p>inline static HeapWord* common_mem_allocate_init(KlassHandle klass, size_t size, TRAPS)<br>分配并初始化对象。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_mem_allocate_noinit(klass, size, CHECK_NULL);</span><br><span class="line">init_obj(obj, size);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>inline static HeapWord* common_permanent_mem_allocate_noinit(size_t size, TRAPS)<br>在Perm段分配内存。<br>调用虚函数<code>permanent_mem_allocate</code>进行分配，这个函数由子类实现。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* result = Universe::heap()-&gt;permanent_mem_allocate(size);</span><br></pre></td></tr></table></figure>
+</li>
+</ul>
+<p>如果失败，报告oom。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">report_java_out_of_memory(<span class="string">"PermGen space"</span>);</span><br></pre></td></tr></table></figure></p>
+<ul>
+<li><p>inline static HeapWord* common_permanent_mem_allocate_init(size_t size, TRAPS)<br>在Perm段分配内存，并初始化。<br>调用common_permanent_mem_allocate_noinit，并初始化。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_permanent_mem_allocate_noinit(size, CHECK_NULL);</span><br><span class="line">init_obj(obj, size);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>static oop Class_obj_allocate(KlassHandle klass, int size, KlassHandle real_klass, TRAPS)<br>  分配并且初始化class对象，即创建mirror class时使用。在jdk7里，class对象从PermGen移到了Heap里，可以通过-XX:+JavaObjectsInPerm，使其还在PermGen分配。</p>
+<p>  首先在合适位置分配内存</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (JavaObjectsInPerm) &#123;</span><br><span class="line">  obj = common_permanent_mem_allocate_init(size, CHECK_NULL);</span><br><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">  assert(ScavengeRootsInCode &gt; <span class="number">0</span>, <span class="string">"must be"</span>);</span><br><span class="line">  obj = common_mem_allocate_init(real_klass, size, CHECK_NULL);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>  初始化并且互相设置引用</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">post_allocation_setup_common(klass, obj);</span><br><span class="line">assert(Universe::is_bootstrapping() ||</span><br><span class="line">       !((oop)obj)-&gt;blueprint()-&gt;oop_is_array(), <span class="string">"must not be an array"</span>);</span><br><span class="line">NOT_PRODUCT(Universe::heap()-&gt;check_for_bad_heap_word_value(obj, size));</span><br><span class="line">oop mirror = (oop)obj;</span><br><span class="line"></span><br><span class="line">java_lang_Class::set_oop_size(mirror, size);</span><br><span class="line"></span><br><span class="line"><span class="comment">// Setup indirections</span></span><br><span class="line"><span class="keyword">if</span> (!real_klass.is_null()) &#123;</span><br><span class="line">  java_lang_Class::set_klass(mirror, real_klass());</span><br><span class="line">  real_klass-&gt;set_java_mirror(mirror);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>inline static oop obj_allocate(KlassHandle klass, int size, TRAPS)<br>分配对象内存，并初始化.</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_mem_allocate_init(klass, size, CHECK_NULL);</span><br><span class="line">post_allocation_setup_obj(klass, obj);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>inline static oop array_allocate(KlassHandle klass, int size, int length, TRAPS)<br>分配数组内存，并初始化</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_mem_allocate_init(klass, size, CHECK_NULL);</span><br><span class="line">post_allocation_setup_array(klass, obj, length);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>inline static oop array_allocate_nozero(KlassHandle klass, int size, int length, TRAPS)<br>分配数组内存，不初始化</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_mem_allocate_noinit(klass, size, CHECK_NULL);</span><br><span class="line">((oop)obj)-&gt;set_klass_gap(<span class="number">0</span>);</span><br><span class="line">post_allocation_setup_array(klass, obj, length);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>virtual HeapWord<em> mem_allocate(size_t size, bool</em> gc_overhead_limit_was_exceeded) = 0;<br>真实的分配内存，纯虚函数，由子类实现。</p>
+</li>
+<li><p>virtual HeapWord* permanent_mem_allocate(size_t size) = 0;<br>真实的分配Perm内存，纯虚函数，由子类实现。</p>
+</li>
+<li><p>virtual bool supports_inline_contig_alloc() const<br>必须满足，在堆中必须有一块儿连续的空间，可用范围由top_addr()，end_addr()决定的，并且可以靠移动top_addr来分配内存。由子类实现。</p>
+</li>
+<li><p>virtual HeapWord** top_addr() const<br>见supports_inline_contig_alloc</p>
+</li>
+<li><p>virtual HeapWord** end_addr() const<br>见supports_inline_contig_alloc</p>
+</li>
+<li><p>virtual void ensure_parsability(bool retire_tlabs)<br>在解析heap之前调用，在这个类里负责调用tlab的相关方法，剩下的由子类实现。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">  <span class="keyword">for</span> (JavaThread *thread = Threads::first(); thread; thread = thread-&gt;next()) &#123;</span><br><span class="line">     <span class="keyword">if</span> (<span class="keyword">use_t</span>lab) thread-&gt;tlab().make_parsable(<span class="keyword">retire_t</span><span class="built_in">labs</span>);</span><br><span class="line"><span class="preprocessor">#ifdef COMPILER2</span></span><br><span class="line">     <span class="comment">// The deferred store barriers must all have been flushed to the</span></span><br><span class="line">     <span class="comment">// card-table (or other remembered set structure) before GC starts</span></span><br><span class="line">     <span class="comment">// processing the card-table (or other remembered set).</span></span><br><span class="line">     <span class="keyword">if</span> (deferred) flush_deferred_store_barrier(thread);</span><br><span class="line"><span class="preprocessor">#<span class="keyword">else</span></span></span><br><span class="line">     assert(!deferred, <span class="string">"Should be false"</span>);</span><br><span class="line">     assert(thread-&gt;deferred_card_mark().is_empty(), <span class="string">"Should be empty"</span>);</span><br><span class="line"><span class="preprocessor">#<span class="keyword">endif</span></span></span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>virtual size_t unsafe_max_alloc() = 0;<br>返回在不触发垃圾收集和扩展的情况下，最大能分配的内存。</p>
+</li>
+<li><p>virtual bool supports_tlab_allocation()<br>是否支持TLAB.</p>
+</li>
+<li><p>virtual size_t tlab_capacity(Thread *thr)<br>TLAB可以使用的内存大小。</p>
+</li>
+<li><p>virtual size_t unsafe_max_tlab_alloc(Thread *thr) const<br>返回在不触发垃圾收集和扩展的情况下，最大能在TLAB分配的内存。</p>
+</li>
+<li><p>virtual void collect(GCCause::Cause cause) = 0<br>提供了垃圾收集的对外接口，供“System.gc”等调用。</p>
+</li>
+</ul>
+<h2 id="CollectorPolicy">CollectorPolicy</h2><p>CollectorPolicy及其子类用来定义垃圾收集的属性。</p>
+<p><strong>属性</strong><br>PermanentGenerationSpec *_permanent_generation</p>
+<blockquote>
+<p>PermanentGenerationSpec<br>size_t           _init_size<br>由PermSize参数决定，缺省为ScaleForWordSize(16<em>M)。<br>size_t           _max_size<br>由MaxPermSize参数决定，缺省为ScaleForWordSize(64</em>M)<br>size_t           _read_only_size<br>由SharedReadOnlySize参数决定，缺省为10M<br>size_t           _read_write_size<br>由SharedReadWriteSize参数确定，缺省13M<br>size_t           _misc_data_size<br>由SharedReadWriteSize参数确定，缺省5M<br>size_t           _misc_code_size<br>由SharedMiscCodeSize参数确定，缺省4M<br>bool             _enable_shared_spaces<br>在client模式下，如果是serial模式的垃圾收集。为了提高启动速度，和减少占用空间。如果jre是通过installer安装的，那么在安装的时候，installer会把一些核心的类，以一种内部格式的形式，dump到client/classes.jsa中，以后启动&gt;时，直接加载这个文件即可。如果不是用installer安装的，可以使用java -Xshare:dump生成，或者运行share模式时，自动生成。我们关注的是server模式，所以不多讨论。</p>
+</blockquote>
+<p>size_t _max_heap_byte_size<br>如果设置了-Xmx，则为设置值。<br>如果没有设置-Xmx，通过下列几步得到：</p>
+<ol>
+<li>MaxHeapSize最初的缺省值为：<code>ScaleForWordSize(96*M)</code><br>如果主机内存太小，小于<code>MaxHeapSize * MinRAMFraction(缺省为2）</code>，即大概为250m左右。 MaxHeapSize设置为<code>内存大小/MinRAMFraction</code>,即内存的一半。<br>如果不是内存太小的情况，设置为<code>phys_mem / MaxRAMFraction(缺省为4)</code>和 缺省的MaxHeapSize两者之中较大的。即为内存的四分之一，最小<code>ScaleForWordSize(96*M)</code>。</li>
+<li>如果使用UseCompressedOops，还需要考虑不能超过compressedOops能表示的地址范围，这个值大约30多G，所以一般没什么影响。</li>
+<li>如果按上述规则得到的值，小于设置的-Xms值，设置为-Xms的大小。</li>
+</ol>
+<p>size_t _initial_heap_byte_size<br>如果设置了-Xms，则为此值。<br>如果没有设置-Xms，则：设置为<code>内存大小/InitialRAMFraction(缺省为64)</code>，但是这个值不能小于<code>OldSize（缺省大小ScaleForWordSize(4*M)) + NewSize（缺省大小ScaleForWordSize(1*M))</code>,同时也不能大于前面计算的MaxHeapSize。</p>
+<p>size_t _min_heap_byte_size<br><code>OldSize（缺省大小ScaleForWordSize(4*M)) + NewSize（缺省大小ScaleForWordSize(1*M))</code></p>
+<p><strong>方法</strong><br>virtual GenRemSet* create_rem_set(MemRegion reserved, int max_covered_regions)<br>建立Remember Set。目前没有子类重新实现这个方法，都使用CollectorPolicy中的这个方法。<br>目前只处理CardTable实现方式，用于跨代指针处理。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">CardTableRS* res = <span class="keyword">new</span> CardTableRS(whole_heap, max_covered_regions);</span><br><span class="line"><span class="keyword">return</span> res;</span><br></pre></td></tr></table></figure></p>
+<p>virtual HeapWord<em> mem_allocate_work(size_t size,  bool is_tlab, bool</em> gc_overhead_limit_was_exceeded)<br>由子类实现，在描述各种收集方法时再描述。请关注<a href="http://jangzq.info/">Jangzq技术研究</a></p>
+<p>virtual HeapWord *satisfy_failed_allocation(size_t size, bool is_tlab)<br>由子类实现，在描述各种收集方法时再描述，请关注<a href="http://jangzq.info/">Jangzq技术研究</a></p>
+<h2 id="GC参数">GC参数</h2><p>gc参数对应的CollectorPolicy和CollectedHeap如下：</p>
+<table>
+<thead>
+<tr>
+<th>GC参数</th>
+<th>CollectorPolicy</th>
+<th>CollectedHeap</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>-XX:+UseSerialGC</td>
+<td>MarkSweepPolicy</td>
+<td>GenCollectedHeap</td>
+</tr>
+<tr>
+<td>-XX:+UseParNewGC</td>
+<td>MarkSweepPolicy</td>
+<td>GenCollectedHeap</td>
+</tr>
+<tr>
+<td>-XX:+UseConcMarkSweepGC -XX:+UseAdaptiveSizePolicy</td>
+<td>ASConcurrentMarkSweepPolicy</td>
+<td>GenCollectedHeap</td>
+</tr>
+<tr>
+<td>-XX:+UseConcMarkSweepGC</td>
+<td>ConcurrentMarkSweepPolicy</td>
+<td>GenCollectedHeap</td>
+</tr>
+<tr>
+<td>-XX:+UseG1GC</td>
+<td>G1CollectorPolicy</td>
+<td>G1CollectedHeap</td>
+</tr>
+</tbody>
+</table>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
+<p>hotspot的垃圾收集框架有两个主要的组成部分，其一是CollectedHeap、其一是CollectorPolicy。根据不同的启动参数，hotspot选择相应的Heap和Policy。<br>首先我们看一下类图，看一下有多少种CollectedHeap和CollectorPolicy。</p>
+<p><img src="/images/heap_policy.png" alt="类图"></p>
+<p>下面列出的是CollectorPolicy和CollectedHeap的关键属性和方法，我们以此来看一下Policy和Heap各自的特性。</p>
+<h2 id="CollectedHeap">CollectedHeap</h2><p>CollectedHeap是java堆在hotspot中的体现，根据垃圾收集算法的不同，具有不同类型的子类，CollectedHeap的主要功能是分配内存，在这个父类里实现的主要是分配的流程，包括TLAB、其它分配等。但是不负责真正的内存分配，因为内存是由其子类管理，所以只定义这些分配的抽象方法。</p>
+<p><strong>属性</strong><br>]]>
+    
+    </summary>
+    
+      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
+    
+  </entry>
   
   <entry>
     <title><![CDATA[classpath中没用到的jar的影响]]></title>

@@ -1,0 +1,569 @@
+
+ <!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  
+    <title>垃圾收集框架：CollectedHeap和CollectorPolicy | Jangzq技术研究</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="Zhang Zq">
+    
+
+    
+    <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+注：未特殊说明，都指的是JDK7.0
+hotspot的垃圾收集框架有两个主要的组成部分，其一是CollectedHeap、其一是CollectorPolicy。根据不同的启动参数，hotspot选择相应的Heap和Policy。首先我们看一下类图，看一下有多少种CollectedHeap和CollectorPolicy。
+
+下面列出的">
+<meta property="og:type" content="article">
+<meta property="og:title" content="垃圾收集框架：CollectedHeap和CollectorPolicy">
+<meta property="og:url" content="http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/index.html">
+<meta property="og:site_name" content="Jangzq技术研究">
+<meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+注：未特殊说明，都指的是JDK7.0
+hotspot的垃圾收集框架有两个主要的组成部分，其一是CollectedHeap、其一是CollectorPolicy。根据不同的启动参数，hotspot选择相应的Heap和Policy。首先我们看一下类图，看一下有多少种CollectedHeap和CollectorPolicy。
+
+下面列出的">
+<meta property="og:image" content="http://jangzq.info/images/heap_policy.png">
+<meta property="og:updated_time" content="2015-07-05T11:38:10.000Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="垃圾收集框架：CollectedHeap和CollectorPolicy">
+<meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+注：未特殊说明，都指的是JDK7.0
+hotspot的垃圾收集框架有两个主要的组成部分，其一是CollectedHeap、其一是CollectorPolicy。根据不同的启动参数，hotspot选择相应的Heap和Policy。首先我们看一下类图，看一下有多少种CollectedHeap和CollectorPolicy。
+
+下面列出的">
+
+    
+    <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+</head>
+
+  <body>
+    <header>
+      
+<div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="Jangzq技术研究">Jangzq技术研究</a></h1>
+				<h2 class="blog-motto">关注代码的秘密， 记录探索点滴， 分享技术收获</h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="菜单">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">主页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于我</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="搜索" />
+						<input type="hidden" name="q" value="site:jangzq.info">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+  
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/07/03/CollectedHeapCollectorPolicy/" title="垃圾收集框架：CollectedHeap和CollectorPolicy" itemprop="url">垃圾收集框架：CollectedHeap和CollectorPolicy</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-03T14:10:27.000Z" itemprop="datePublished"> 发表于 2015-07-03</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">文章目录</strong>
+		
+			<ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#CollectedHeap"><span class="toc-number">1.</span> <span class="toc-text">CollectedHeap</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#CollectorPolicy"><span class="toc-number">2.</span> <span class="toc-text">CollectorPolicy</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#GC参数"><span class="toc-number">3.</span> <span class="toc-text">GC参数</span></a></li></ol>
+		
+		</div>
+		
+		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
+<p>hotspot的垃圾收集框架有两个主要的组成部分，其一是CollectedHeap、其一是CollectorPolicy。根据不同的启动参数，hotspot选择相应的Heap和Policy。<br>首先我们看一下类图，看一下有多少种CollectedHeap和CollectorPolicy。</p>
+<p><img src="/images/heap_policy.png" alt="类图"></p>
+<p>下面列出的是CollectorPolicy和CollectedHeap的关键属性和方法，我们以此来看一下Policy和Heap各自的特性。</p>
+<h2 id="CollectedHeap">CollectedHeap</h2><p>CollectedHeap是java堆在hotspot中的体现，根据垃圾收集算法的不同，具有不同类型的子类，CollectedHeap的主要功能是分配内存，在这个父类里实现的主要是分配的流程，包括TLAB、其它分配等。但是不负责真正的内存分配，因为内存是由其子类管理，所以只定义这些分配的抽象方法。</p>
+<p><strong>属性</strong><br><a id="more"></a></p>
+<ul>
+<li><p>MemRegion _reserved<br>描述地址空间中一块儿连续的区域，由子类负责初始化、使用。</p>
+</li>
+<li><p>uint _n_par_threads<br>并行线程数。</p>
+</li>
+<li><p>GCCause::Cause _gc_cause<br>GC原因</p>
+</li>
+<li><p>GCCause::Cause _gc_lastcause<br>最后一次的GC原因</p>
+</li>
+</ul>
+<p><strong>方法</strong></p>
+<ul>
+<li><p>virtual HeapWord* allocate_new_tlab(size_t size)<br>创建一个新的TLAB，在CollectedHeap中没有实现这个方法，由子类负责实现。</p>
+</li>
+<li><p>inline static HeapWord<em> allocate_from_tlab(KlassHandle klass, Thread</em> thread, size_t size);<br>从TLAB里分配内存，流程如下：<br>首先调用thread对象中的_tlab（类型为：ThreadLocalAllocBuffer）的allocate方法,在TLAB上分配内存，</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = thread-&gt;tlab().allocate(size)</span><br></pre></td></tr></table></figure>
+<p>  如果没有分配成功，调用<code>allocate_from_tlab_slow</code>分配。 </p>
+</li>
+<li><p>static HeapWord<em> allocate_from_tlab_slow(KlassHandle klass, Thread</em> thread, size_t size)<br>  首先判断本TLAB中剩余内存，是否大于可以浪费的内存limit，如果大于，则不能在TLAB中分配</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (thread-&gt;tlab().<span class="built_in">free</span>() &gt; thread-&gt;tlab().refill_waste_limit()) &#123;</span><br><span class="line">   thread-&gt;tlab().record_slow_allocation(size);</span><br><span class="line">   <span class="keyword">return</span> NULL;</span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure>
+<p>  否则，计算新的TLAB的大小，新分配一个TLAB，并且为了遍历对象，把原来分配TLAB没有使用的部分清0。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">size_t</span> <span class="keyword">new_t</span>lab_size = thread-&gt;tlab().compute_size(size);</span><br><span class="line">thread-&gt;tlab().clear_before_allocation();</span><br></pre></td></tr></table></figure>
+<p>  调用<code>allocate_new_tlab</code>分配了TLAB，如果设置了ZeroTLAB，还需要进行清0</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = Universe::heap()-&gt;<span class="keyword">allocate_new_t</span>lab(<span class="keyword">new_t</span>lab_size);</span><br><span class="line"><span class="keyword">if</span> (obj == NULL) &#123;</span><br><span class="line">  <span class="keyword">return</span> NULL;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> (ZeroTLAB) &#123;</span><br><span class="line">  Copy::<span class="keyword">zero_t</span>o_words(obj, <span class="keyword">new_t</span>lab_size);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>  在新的tlab上分配</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">thread-&gt;tlab().fill(obj, obj + size, <span class="keyword">new_t</span>lab_size);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>inline static HeapWord* common_mem_allocate_noinit(KlassHandle klass, size_t size, TRAPS)<br>  分配对象内存。<br>  首先在tlab中分配。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (UseTLAB) &#123;</span><br><span class="line">  result = <span class="keyword">allocate_from_t</span>lab(klass, THREAD, size);</span><br><span class="line">  <span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">    assert(!HAS_PENDING_EXCEPTION,</span><br><span class="line">           <span class="string">"Unexpected exception, will result in uninitialized storage"</span>);</span><br><span class="line">    <span class="keyword">return</span> result;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>  分配不成功，调用当前CollectedHeap的mem_allocate方法，这个是个虚函数，由具体的子类实现。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">result = Universe::heap()-&gt;mem_allocate(size,</span><br><span class="line">                                        &amp;gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure>
+</li>
+</ul>
+<ul>
+<li><p>inline static HeapWord* common_mem_allocate_init(KlassHandle klass, size_t size, TRAPS)<br>分配并初始化对象。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_mem_allocate_noinit(klass, size, CHECK_NULL);</span><br><span class="line">init_obj(obj, size);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>inline static HeapWord* common_permanent_mem_allocate_noinit(size_t size, TRAPS)<br>在Perm段分配内存。<br>调用虚函数<code>permanent_mem_allocate</code>进行分配，这个函数由子类实现。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* result = Universe::heap()-&gt;permanent_mem_allocate(size);</span><br></pre></td></tr></table></figure>
+</li>
+</ul>
+<p>如果失败，报告oom。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">report_java_out_of_memory(<span class="string">"PermGen space"</span>);</span><br></pre></td></tr></table></figure></p>
+<ul>
+<li><p>inline static HeapWord* common_permanent_mem_allocate_init(size_t size, TRAPS)<br>在Perm段分配内存，并初始化。<br>调用common_permanent_mem_allocate_noinit，并初始化。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_permanent_mem_allocate_noinit(size, CHECK_NULL);</span><br><span class="line">init_obj(obj, size);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>static oop Class_obj_allocate(KlassHandle klass, int size, KlassHandle real_klass, TRAPS)<br>  分配并且初始化class对象，即创建mirror class时使用。在jdk7里，class对象从PermGen移到了Heap里，可以通过-XX:+JavaObjectsInPerm，使其还在PermGen分配。</p>
+<p>  首先在合适位置分配内存</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (JavaObjectsInPerm) &#123;</span><br><span class="line">  obj = common_permanent_mem_allocate_init(size, CHECK_NULL);</span><br><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">  assert(ScavengeRootsInCode &gt; <span class="number">0</span>, <span class="string">"must be"</span>);</span><br><span class="line">  obj = common_mem_allocate_init(real_klass, size, CHECK_NULL);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>  初始化并且互相设置引用</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">post_allocation_setup_common(klass, obj);</span><br><span class="line">assert(Universe::is_bootstrapping() ||</span><br><span class="line">       !((oop)obj)-&gt;blueprint()-&gt;oop_is_array(), <span class="string">"must not be an array"</span>);</span><br><span class="line">NOT_PRODUCT(Universe::heap()-&gt;check_for_bad_heap_word_value(obj, size));</span><br><span class="line">oop mirror = (oop)obj;</span><br><span class="line"></span><br><span class="line">java_lang_Class::set_oop_size(mirror, size);</span><br><span class="line"></span><br><span class="line"><span class="comment">// Setup indirections</span></span><br><span class="line"><span class="keyword">if</span> (!real_klass.is_null()) &#123;</span><br><span class="line">  java_lang_Class::set_klass(mirror, real_klass());</span><br><span class="line">  real_klass-&gt;set_java_mirror(mirror);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>inline static oop obj_allocate(KlassHandle klass, int size, TRAPS)<br>分配对象内存，并初始化.</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_mem_allocate_init(klass, size, CHECK_NULL);</span><br><span class="line">post_allocation_setup_obj(klass, obj);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>inline static oop array_allocate(KlassHandle klass, int size, int length, TRAPS)<br>分配数组内存，并初始化</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_mem_allocate_init(klass, size, CHECK_NULL);</span><br><span class="line">post_allocation_setup_array(klass, obj, length);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>inline static oop array_allocate_nozero(KlassHandle klass, int size, int length, TRAPS)<br>分配数组内存，不初始化</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_mem_allocate_noinit(klass, size, CHECK_NULL);</span><br><span class="line">((oop)obj)-&gt;set_klass_gap(<span class="number">0</span>);</span><br><span class="line">post_allocation_setup_array(klass, obj, length);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>virtual HeapWord<em> mem_allocate(size_t size, bool</em> gc_overhead_limit_was_exceeded) = 0;<br>真实的分配内存，纯虚函数，由子类实现。</p>
+</li>
+<li><p>virtual HeapWord* permanent_mem_allocate(size_t size) = 0;<br>真实的分配Perm内存，纯虚函数，由子类实现。</p>
+</li>
+<li><p>virtual bool supports_inline_contig_alloc() const<br>必须满足，在堆中必须有一块儿连续的空间，可用范围由top_addr()，end_addr()决定的，并且可以靠移动top_addr来分配内存。由子类实现。</p>
+</li>
+<li><p>virtual HeapWord** top_addr() const<br>见supports_inline_contig_alloc</p>
+</li>
+<li><p>virtual HeapWord** end_addr() const<br>见supports_inline_contig_alloc</p>
+</li>
+<li><p>virtual void ensure_parsability(bool retire_tlabs)<br>在解析heap之前调用，在这个类里负责调用tlab的相关方法，剩下的由子类实现。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">  <span class="keyword">for</span> (JavaThread *thread = Threads::first(); thread; thread = thread-&gt;next()) &#123;</span><br><span class="line">     <span class="keyword">if</span> (<span class="keyword">use_t</span>lab) thread-&gt;tlab().make_parsable(<span class="keyword">retire_t</span><span class="built_in">labs</span>);</span><br><span class="line"><span class="preprocessor">#ifdef COMPILER2</span></span><br><span class="line">     <span class="comment">// The deferred store barriers must all have been flushed to the</span></span><br><span class="line">     <span class="comment">// card-table (or other remembered set structure) before GC starts</span></span><br><span class="line">     <span class="comment">// processing the card-table (or other remembered set).</span></span><br><span class="line">     <span class="keyword">if</span> (deferred) flush_deferred_store_barrier(thread);</span><br><span class="line"><span class="preprocessor">#<span class="keyword">else</span></span></span><br><span class="line">     assert(!deferred, <span class="string">"Should be false"</span>);</span><br><span class="line">     assert(thread-&gt;deferred_card_mark().is_empty(), <span class="string">"Should be empty"</span>);</span><br><span class="line"><span class="preprocessor">#<span class="keyword">endif</span></span></span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>virtual size_t unsafe_max_alloc() = 0;<br>返回在不触发垃圾收集和扩展的情况下，最大能分配的内存。</p>
+</li>
+<li><p>virtual bool supports_tlab_allocation()<br>是否支持TLAB.</p>
+</li>
+<li><p>virtual size_t tlab_capacity(Thread *thr)<br>TLAB可以使用的内存大小。</p>
+</li>
+<li><p>virtual size_t unsafe_max_tlab_alloc(Thread *thr) const<br>返回在不触发垃圾收集和扩展的情况下，最大能在TLAB分配的内存。</p>
+</li>
+<li><p>virtual void collect(GCCause::Cause cause) = 0<br>提供了垃圾收集的对外接口，供“System.gc”等调用。</p>
+</li>
+</ul>
+<h2 id="CollectorPolicy">CollectorPolicy</h2><p>CollectorPolicy及其子类用来定义垃圾收集的属性。</p>
+<p><strong>属性</strong><br>PermanentGenerationSpec *_permanent_generation</p>
+<blockquote>
+<p>PermanentGenerationSpec<br>size_t           _init_size<br>由PermSize参数决定，缺省为ScaleForWordSize(16<em>M)。<br>size_t           _max_size<br>由MaxPermSize参数决定，缺省为ScaleForWordSize(64</em>M)<br>size_t           _read_only_size<br>由SharedReadOnlySize参数决定，缺省为10M<br>size_t           _read_write_size<br>由SharedReadWriteSize参数确定，缺省13M<br>size_t           _misc_data_size<br>由SharedReadWriteSize参数确定，缺省5M<br>size_t           _misc_code_size<br>由SharedMiscCodeSize参数确定，缺省4M<br>bool             _enable_shared_spaces<br>在client模式下，如果是serial模式的垃圾收集。为了提高启动速度，和减少占用空间。如果jre是通过installer安装的，那么在安装的时候，installer会把一些核心的类，以一种内部格式的形式，dump到client/classes.jsa中，以后启动&gt;时，直接加载这个文件即可。如果不是用installer安装的，可以使用java -Xshare:dump生成，或者运行share模式时，自动生成。我们关注的是server模式，所以不多讨论。</p>
+</blockquote>
+<p>size_t _max_heap_byte_size<br>如果设置了-Xmx，则为设置值。<br>如果没有设置-Xmx，通过下列几步得到：</p>
+<ol>
+<li>MaxHeapSize最初的缺省值为：<code>ScaleForWordSize(96*M)</code><br>如果主机内存太小，小于<code>MaxHeapSize * MinRAMFraction(缺省为2）</code>，即大概为250m左右。 MaxHeapSize设置为<code>内存大小/MinRAMFraction</code>,即内存的一半。<br>如果不是内存太小的情况，设置为<code>phys_mem / MaxRAMFraction(缺省为4)</code>和 缺省的MaxHeapSize两者之中较大的。即为内存的四分之一，最小<code>ScaleForWordSize(96*M)</code>。</li>
+<li>如果使用UseCompressedOops，还需要考虑不能超过compressedOops能表示的地址范围，这个值大约30多G，所以一般没什么影响。</li>
+<li>如果按上述规则得到的值，小于设置的-Xms值，设置为-Xms的大小。</li>
+</ol>
+<p>size_t _initial_heap_byte_size<br>如果设置了-Xms，则为此值。<br>如果没有设置-Xms，则：设置为<code>内存大小/InitialRAMFraction(缺省为64)</code>，但是这个值不能小于<code>OldSize（缺省大小ScaleForWordSize(4*M)) + NewSize（缺省大小ScaleForWordSize(1*M))</code>,同时也不能大于前面计算的MaxHeapSize。</p>
+<p>size_t _min_heap_byte_size<br><code>OldSize（缺省大小ScaleForWordSize(4*M)) + NewSize（缺省大小ScaleForWordSize(1*M))</code></p>
+<p><strong>方法</strong><br>virtual GenRemSet* create_rem_set(MemRegion reserved, int max_covered_regions)<br>建立Remember Set。目前没有子类重新实现这个方法，都使用CollectorPolicy中的这个方法。<br>目前只处理CardTable实现方式，用于跨代指针处理。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">CardTableRS* res = <span class="keyword">new</span> CardTableRS(whole_heap, max_covered_regions);</span><br><span class="line"><span class="keyword">return</span> res;</span><br></pre></td></tr></table></figure></p>
+<p>virtual HeapWord<em> mem_allocate_work(size_t size,  bool is_tlab, bool</em> gc_overhead_limit_was_exceeded)<br>由子类实现，在描述各种收集方法时再描述。请关注<a href="http://jangzq.info/">Jangzq技术研究</a></p>
+<p>virtual HeapWord *satisfy_failed_allocation(size_t size, bool is_tlab)<br>由子类实现，在描述各种收集方法时再描述，请关注<a href="http://jangzq.info/">Jangzq技术研究</a></p>
+<h2 id="GC参数">GC参数</h2><p>gc参数对应的CollectorPolicy和CollectedHeap如下：</p>
+<table>
+<thead>
+<tr>
+<th>GC参数</th>
+<th>CollectorPolicy</th>
+<th>CollectedHeap</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>-XX:+UseSerialGC</td>
+<td>MarkSweepPolicy</td>
+<td>GenCollectedHeap</td>
+</tr>
+<tr>
+<td>-XX:+UseParNewGC</td>
+<td>MarkSweepPolicy</td>
+<td>GenCollectedHeap</td>
+</tr>
+<tr>
+<td>-XX:+UseConcMarkSweepGC -XX:+UseAdaptiveSizePolicy</td>
+<td>ASConcurrentMarkSweepPolicy</td>
+<td>GenCollectedHeap</td>
+</tr>
+<tr>
+<td>-XX:+UseConcMarkSweepGC</td>
+<td>ConcurrentMarkSweepPolicy</td>
+<td>GenCollectedHeap</td>
+</tr>
+<tr>
+<td>-XX:+UseG1GC</td>
+<td>G1CollectorPolicy</td>
+<td>G1CollectedHeap</td>
+</tr>
+</tbody>
+</table>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+	<div class="article-share" id="share">
+	
+	  <div data-url="http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/" data-title="垃圾收集框架：CollectedHeap和CollectorPolicy | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  </div>
+	
+	</div>
+
+
+</footer>
+
+   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+ <div class="prev" >
+ <a href="/2015/07/05/new/" title="通过解释器的new操作看内存分配">
+  <strong>上一篇：</strong><br/>
+  <span>
+  通过解释器的new操作看内存分配</span>
+</a>
+</div>
+
+
+<div class="next">
+<a href="/2015/07/02/classpath_jar/"  title="classpath中没用到的jar的影响">
+ <strong>下一篇：</strong><br/> 
+ <span>classpath中没用到的jar的影响
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="显示侧边栏"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">文章目录</strong>
+ 
+ <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#CollectedHeap"><span class="toc-number">1.</span> <span class="toc-text">CollectedHeap</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#CollectorPolicy"><span class="toc-number">2.</span> <span class="toc-text">CollectorPolicy</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#GC参数"><span class="toc-number">3.</span> <span class="toc-text">GC参数</span></a></li></ol>
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="隐藏侧边栏"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+<div class="tagslist">
+	<p class="asidetitle">标签</p>
+		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>4</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>1</sup></a></li>
+			
+		
+		</ul>
+</div>
+
+
+  <div class="linkslist">
+  <p class="asidetitle">友情链接</p>
+    <ul>
+        
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS 订阅</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	
+	<section class="info">
+		<p> Jangzq&#39;s blog <br/>
+			Focus on the secret of code!</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		<a href="http://weibo.com/Jangzq" target="_blank" class="icon-weibo" title="微博"></a>
+		
+		
+		<a href="https://github.com/Jangzq" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:zqzhangmail@163.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+			
+		
+
+		<p class="copyright">
+		Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Jacman">Jacman</a> © 2015 
+		
+		<a href="/about" target="_blank" title="Zhang Zq">Zhang Zq</a>
+		
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script src="/js/jquery.imagesloaded.min.js"></script>
+<script src="/js/gallery.js"></script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+  
+        getSize();
+        if (myWidth >= 1024) {
+          c.click();
+        }
+  
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else{
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  c.click(function(){
+    ta.css('display', 'block').addClass('fadeIn');
+  });
+  o.click(function(){
+    ta.css('display', 'none');
+  });
+  $(window).scroll(function(){
+    ta.css("top",Math.max(140,320-$(this).scrollTop()));
+  });
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#nothing"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="微信"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="微博"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+<!-- Analytics Begin -->
+
+
+
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3F435d1985a249fde8415798105b4f848b' type='text/javascript'%3E%3C/script%3E"));
+</script>
+
+
+
+<!-- Analytics End -->
+
+<!-- Totop Begin -->
+
+	<div id="totop">
+	<a title="返回顶部"><img src="/img/scrollup.png"/></a>
+	</div>
+	<script src="/js/totop.js"></script>
+
+<!-- Totop End -->
+
+<!-- MathJax Begin -->
+<!-- mathjax config similar to math.stackexchange -->
+
+
+<!-- MathJax End -->
+
+<!-- Tiny_search Begin -->
+
+<!-- Tiny_search End -->
+
+  </body>
+</html>

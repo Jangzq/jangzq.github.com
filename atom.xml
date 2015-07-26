@@ -5,7 +5,7 @@
   <subtitle><![CDATA[关注代码的秘密， 记录探索点滴， 分享技术收获]]></subtitle>
   <link href="/atom.xml" rel="self"/>
   <link href="http://jangzq.info//"/>
-  <updated>2015-07-04T16:30:24.000Z</updated>
+  <updated>2015-07-26T12:39:01.000Z</updated>
   <id>http://jangzq.info//</id>
   
   <author>
@@ -14,6 +14,86 @@
   </author>
   
   <generator uri="http://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title><![CDATA[分代内存管理之慢速路径内存分配]]></title>
+    <link href="http://jangzq.info/2015/07/26/GenCollectedHeap_allocate/"/>
+    <id>http://jangzq.info/2015/07/26/GenCollectedHeap_allocate/</id>
+    <published>2015-07-26T03:45:47.000Z</published>
+    <updated>2015-07-26T12:39:01.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>分代的内存管理使用GenCollectedHeap。generation的类如下：</p>
+<p><img src="/images/generation.png" alt="Generation"></p>
+<p>在这里我们主要剖析慢速路径使用的GenCollectedHeap::mem_allocate方法。其内存分配委托给了相应的CollectorPolicy实现。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">return</span> collector_policy()-&gt;mem_allocate_work(size,</span><br><span class="line">                                             <span class="keyword">false</span> <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                                             gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure>
+<p>所以，下面剖析GenCollectorPolicy::mem_allocate_work的实现。</p>
+<ul>
+<li><p>内存分配的逻辑在下列循环中，说明此方法只有两个出口，或者分配成功，或者抛出异常。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> try_count = <span class="number">1</span>; <span class="comment">/* return or throw */</span>; try_count += <span class="number">1</span>) </span><br><span class="line">&#123;</span><br><span class="line">	....</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>分代的内存管理，在Young generation里实现无锁的分配方式，从assert中可以看出，Young generation必须满足<code>supports_inline_contig_alloc</code>，即必须满足，在堆中必须有一块儿连续的空间，可用范围由top_addr()，end_addr()决定的，并且可以靠移动top_addr来分配内存。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">assert(gen0-&gt;supports_inline_contig_alloc(),</span><br><span class="line">      <span class="string">"Otherwise, must do alloc within heap lock"</span>);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>接下来，在Young generation进行无锁分配。</p>
+<a id="more"></a>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (gen0-&gt;should_allocate(size, <span class="keyword">is_t</span>lab)) &#123;</span><br><span class="line">  result = gen0-&gt;par_allocate(size, <span class="keyword">is_t</span>lab);</span><br><span class="line">  <span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">    assert(gch-&gt;is_in_reserved(result), <span class="string">"result not in heap"</span>);</span><br><span class="line">    <span class="keyword">return</span> result;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p><strong>bool should_allocate(size_t word_size, bool is_tlab)</strong>：在这个generation中是否可以分配<code>word_size</code>大小的内存。<br><em>defNewGeneration及其子类</em><br>1、没有overflows，即没有超过size_t表示的范围。<br>2、如果设置了PretenureSizeThreshold，小于此值。</p>
+<p><em>其它</em><br>只判断是否overflows。</p>
+<p><strong>HeapWord* par_allocate(size_t word_size, bool is_tlab)</strong>: 在慢速路径分配时，提供不加锁分配内存的方式。<br><em>defNewGeneration</em>:<br>调用Eden区的par_allocate方法，使用cmpxchg方式修改top指针，分配内存。</p>
+</li>
+<li><p>如果上面没有分配成功，将使用有锁的慢速分配，这部分使用的是GenCollectedHeap::attempt_allocation方法。首先需要确认是否只在Young generation进行分配，如果只需在Young generation进行分配，那么当不能成功分配的时候，就进行GC，否则尝试在更老的Generation上分配，所以这个判断是很重要的。<br><strong>bool GenCollectorPolicy::should_try_older_generation_allocation(size_t word_size) const</strong>: 判断是否只在Young generation上进行分配。<br>满足下列三个条件之一，就需要在更老的Generation尝试。</p>
+<ol>
+<li>调用<code>gch-&gt;get_gen(0)-&gt;capacity_before_gc()</code>得到Young generation不用GC，最多能分配的内存大小，defNewGeneration及其子类，直接返回Eden的容量。即如果要分配的内存大于Eden的容量，则需要尝试next generation.</li>
+<li><code>GC_locker::is_active_and_needs_gc()</code>，即当前有jni方法在critical区域，并且有线程要求gc，这时如果只在Young generation分配，则势必需要GC，造成阻塞，所以需要尝试next generation.</li>
+<li><code>gch-&gt;incremental_collection_failed()</code>，即最近一次的incremental收集错误，也就是在Young generation层GC应该没有效果，所以需要尝试next generation.</li>
+</ol>
+<p>在GenCollectedHeap::attempt_allocation中，以此调用各个Generation的allocate方法进行分配。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"> <span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; _n_gens; i++) &#123;</span><br><span class="line">  <span class="keyword">if</span> (_gens[i]-&gt;should_allocate(size, <span class="keyword">is_t</span>lab)) &#123;</span><br><span class="line">    res = _gens[i]-&gt;allocate(size, <span class="keyword">is_t</span>lab);</span><br><span class="line">    <span class="keyword">if</span> (res != NULL) <span class="keyword">return</span> res;</span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> (first_only) <span class="keyword">break</span>;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果到此还没有分配成功，首先不要急于GC，如果<code>GC_locker::is_active_and_needs_gc()</code>，即当前有jni方法在critical区域，并且有线程要求gc，则进行如下处理。</p>
+<ol>
+<li>如果是要求在TLAB上分配，则直接返回NULL，调用者会尝试接下来的分配方式。</li>
+<li>使用<code>GenCollectedHeap::is_maximal_no_gc</code>得到各个generation是否没有达到最大设置，如果存在这样的generation，调用<code>GenCollectorPolicy::expand_heap_and_allocate</code>扩展并且分配。</li>
+<li>如果上一步没有分配成功，则等待处于critical的jni线程退出后，再次从头执行分配流程。<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!jthr-&gt;in_critical()) &#123;</span><br><span class="line">        <span class="function">MutexUnlocker <span class="title">mul</span><span class="params">(Heap_lock)</span></span>;</span><br><span class="line">        <span class="comment">// Wait for JNI critical section to be exited</span></span><br><span class="line">        GC_locker::stall_until_clear();</span><br><span class="line">        <span class="keyword">continue</span>;</span><br><span class="line">      &#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+<li><p>进行GC，并且同时分配。</p>
+<ol>
+<li><p>提交GC. </p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">VM_GenCollectForAllocation <span class="title">op</span><span class="params">(size,</span><br><span class="line">                            is_tlab,</span><br><span class="line">                            gc_count_before)</span></span>;</span><br><span class="line">VMThread::execute(&amp;op);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果别的线程已经请求GC了，则从头执行分配流程重试。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (op.prologue_succeeded()) &#123;</span><br><span class="line">  result = op.result();</span><br><span class="line">  <span class="keyword">if</span> (op.gc_locked()) &#123;</span><br><span class="line">     assert(result == NULL, <span class="string">"must be NULL if gc_locked() is true"</span>);</span><br><span class="line">     <span class="keyword">continue</span>;  <span class="comment">// retry and/or stall as necessary</span></span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果执行完gc，但是花费了很多时间，才回收下很少内存，返回NULL，并且给<code>gc_overhead_limit_was_exceeded</code>赋值。</p>
+</li>
+<li>gc并分配成功，返回结果。</li>
+</ol>
+</li>
+</ul>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>分代的内存管理使用GenCollectedHeap。generation的类如下：</p>
+<p><img src="/images/generation.png" alt="Generation"></p>
+<p>在这里我们主要剖析慢速路径使用的GenCollectedHeap::mem_allocate方法。其内存分配委托给了相应的CollectorPolicy实现。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">return</span> collector_policy()-&gt;mem_allocate_work(size,</span><br><span class="line">                                             <span class="keyword">false</span> <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                                             gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure>
+<p>所以，下面剖析GenCollectorPolicy::mem_allocate_work的实现。</p>
+<ul>
+<li><p>内存分配的逻辑在下列循环中，说明此方法只有两个出口，或者分配成功，或者抛出异常。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> try_count = <span class="number">1</span>; <span class="comment">/* return or throw */</span>; try_count += <span class="number">1</span>) </span><br><span class="line">&#123;</span><br><span class="line">	....</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>分代的内存管理，在Young generation里实现无锁的分配方式，从assert中可以看出，Young generation必须满足<code>supports_inline_contig_alloc</code>，即必须满足，在堆中必须有一块儿连续的空间，可用范围由top_addr()，end_addr()决定的，并且可以靠移动top_addr来分配内存。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">assert(gen0-&gt;supports_inline_contig_alloc(),</span><br><span class="line">      <span class="string">"Otherwise, must do alloc within heap lock"</span>);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>接下来，在Young generation进行无锁分配。</p>]]>
+    
+    </summary>
+    
+      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
+    
+  </entry>
   
   <entry>
     <title><![CDATA[通过解释器的new操作看内存分配]]></title>

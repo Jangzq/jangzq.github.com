@@ -1,0 +1,467 @@
+
+ <!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  
+    <title>分代内存管理之慢速路径内存分配 | Jangzq技术研究</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="Zhang Zq">
+    
+
+    
+    <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+分代的内存管理使用GenCollectedHeap。generation的类如下：
+
+在这里我们主要剖析慢速路径使用的GenCollectedHeap::mem_allocate方法。其内存分配委托给了相应的CollectorPolicy实现。
+123return collector_policy()-&amp;gt;mem_allocate">
+<meta property="og:type" content="article">
+<meta property="og:title" content="分代内存管理之慢速路径内存分配">
+<meta property="og:url" content="http://jangzq.info/2015/07/26/GenCollectedHeap_allocate/index.html">
+<meta property="og:site_name" content="Jangzq技术研究">
+<meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+分代的内存管理使用GenCollectedHeap。generation的类如下：
+
+在这里我们主要剖析慢速路径使用的GenCollectedHeap::mem_allocate方法。其内存分配委托给了相应的CollectorPolicy实现。
+123return collector_policy()-&amp;gt;mem_allocate">
+<meta property="og:image" content="http://jangzq.info/images/generation.png">
+<meta property="og:updated_time" content="2015-07-26T12:39:01.000Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="分代内存管理之慢速路径内存分配">
+<meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+分代的内存管理使用GenCollectedHeap。generation的类如下：
+
+在这里我们主要剖析慢速路径使用的GenCollectedHeap::mem_allocate方法。其内存分配委托给了相应的CollectorPolicy实现。
+123return collector_policy()-&amp;gt;mem_allocate">
+
+    
+    <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+</head>
+
+  <body>
+    <header>
+      
+<div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="Jangzq技术研究">Jangzq技术研究</a></h1>
+				<h2 class="blog-motto">关注代码的秘密， 记录探索点滴， 分享技术收获</h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="菜单">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">主页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于我</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="搜索" />
+						<input type="hidden" name="q" value="site:jangzq.info">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+  
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/07/26/GenCollectedHeap_allocate/" title="分代内存管理之慢速路径内存分配" itemprop="url">分代内存管理之慢速路径内存分配</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-26T03:45:47.000Z" itemprop="datePublished"> 发表于 2015-07-26</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">文章目录</strong>
+		
+			
+		
+		</div>
+		
+		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>分代的内存管理使用GenCollectedHeap。generation的类如下：</p>
+<p><img src="/images/generation.png" alt="Generation"></p>
+<p>在这里我们主要剖析慢速路径使用的GenCollectedHeap::mem_allocate方法。其内存分配委托给了相应的CollectorPolicy实现。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">return</span> collector_policy()-&gt;mem_allocate_work(size,</span><br><span class="line">                                             <span class="keyword">false</span> <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                                             gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure>
+<p>所以，下面剖析GenCollectorPolicy::mem_allocate_work的实现。</p>
+<ul>
+<li><p>内存分配的逻辑在下列循环中，说明此方法只有两个出口，或者分配成功，或者抛出异常。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> try_count = <span class="number">1</span>; <span class="comment">/* return or throw */</span>; try_count += <span class="number">1</span>) </span><br><span class="line">&#123;</span><br><span class="line">	....</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>分代的内存管理，在Young generation里实现无锁的分配方式，从assert中可以看出，Young generation必须满足<code>supports_inline_contig_alloc</code>，即必须满足，在堆中必须有一块儿连续的空间，可用范围由top_addr()，end_addr()决定的，并且可以靠移动top_addr来分配内存。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">assert(gen0-&gt;supports_inline_contig_alloc(),</span><br><span class="line">      <span class="string">"Otherwise, must do alloc within heap lock"</span>);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>接下来，在Young generation进行无锁分配。</p>
+<a id="more"></a>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (gen0-&gt;should_allocate(size, <span class="keyword">is_t</span>lab)) &#123;</span><br><span class="line">  result = gen0-&gt;par_allocate(size, <span class="keyword">is_t</span>lab);</span><br><span class="line">  <span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">    assert(gch-&gt;is_in_reserved(result), <span class="string">"result not in heap"</span>);</span><br><span class="line">    <span class="keyword">return</span> result;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p><strong>bool should_allocate(size_t word_size, bool is_tlab)</strong>：在这个generation中是否可以分配<code>word_size</code>大小的内存。<br><em>defNewGeneration及其子类</em><br>1、没有overflows，即没有超过size_t表示的范围。<br>2、如果设置了PretenureSizeThreshold，小于此值。</p>
+<p><em>其它</em><br>只判断是否overflows。</p>
+<p><strong>HeapWord* par_allocate(size_t word_size, bool is_tlab)</strong>: 在慢速路径分配时，提供不加锁分配内存的方式。<br><em>defNewGeneration</em>:<br>调用Eden区的par_allocate方法，使用cmpxchg方式修改top指针，分配内存。</p>
+</li>
+<li><p>如果上面没有分配成功，将使用有锁的慢速分配，这部分使用的是GenCollectedHeap::attempt_allocation方法。首先需要确认是否只在Young generation进行分配，如果只需在Young generation进行分配，那么当不能成功分配的时候，就进行GC，否则尝试在更老的Generation上分配，所以这个判断是很重要的。<br><strong>bool GenCollectorPolicy::should_try_older_generation_allocation(size_t word_size) const</strong>: 判断是否只在Young generation上进行分配。<br>满足下列三个条件之一，就需要在更老的Generation尝试。</p>
+<ol>
+<li>调用<code>gch-&gt;get_gen(0)-&gt;capacity_before_gc()</code>得到Young generation不用GC，最多能分配的内存大小，defNewGeneration及其子类，直接返回Eden的容量。即如果要分配的内存大于Eden的容量，则需要尝试next generation.</li>
+<li><code>GC_locker::is_active_and_needs_gc()</code>，即当前有jni方法在critical区域，并且有线程要求gc，这时如果只在Young generation分配，则势必需要GC，造成阻塞，所以需要尝试next generation.</li>
+<li><code>gch-&gt;incremental_collection_failed()</code>，即最近一次的incremental收集错误，也就是在Young generation层GC应该没有效果，所以需要尝试next generation.</li>
+</ol>
+<p>在GenCollectedHeap::attempt_allocation中，以此调用各个Generation的allocate方法进行分配。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"> <span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; _n_gens; i++) &#123;</span><br><span class="line">  <span class="keyword">if</span> (_gens[i]-&gt;should_allocate(size, <span class="keyword">is_t</span>lab)) &#123;</span><br><span class="line">    res = _gens[i]-&gt;allocate(size, <span class="keyword">is_t</span>lab);</span><br><span class="line">    <span class="keyword">if</span> (res != NULL) <span class="keyword">return</span> res;</span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> (first_only) <span class="keyword">break</span>;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果到此还没有分配成功，首先不要急于GC，如果<code>GC_locker::is_active_and_needs_gc()</code>，即当前有jni方法在critical区域，并且有线程要求gc，则进行如下处理。</p>
+<ol>
+<li>如果是要求在TLAB上分配，则直接返回NULL，调用者会尝试接下来的分配方式。</li>
+<li>使用<code>GenCollectedHeap::is_maximal_no_gc</code>得到各个generation是否没有达到最大设置，如果存在这样的generation，调用<code>GenCollectorPolicy::expand_heap_and_allocate</code>扩展并且分配。</li>
+<li>如果上一步没有分配成功，则等待处于critical的jni线程退出后，再次从头执行分配流程。<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!jthr-&gt;in_critical()) &#123;</span><br><span class="line">        <span class="function">MutexUnlocker <span class="title">mul</span><span class="params">(Heap_lock)</span></span>;</span><br><span class="line">        <span class="comment">// Wait for JNI critical section to be exited</span></span><br><span class="line">        GC_locker::stall_until_clear();</span><br><span class="line">        <span class="keyword">continue</span>;</span><br><span class="line">      &#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+<li><p>进行GC，并且同时分配。</p>
+<ol>
+<li><p>提交GC. </p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">VM_GenCollectForAllocation <span class="title">op</span><span class="params">(size,</span><br><span class="line">                            is_tlab,</span><br><span class="line">                            gc_count_before)</span></span>;</span><br><span class="line">VMThread::execute(&amp;op);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果别的线程已经请求GC了，则从头执行分配流程重试。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (op.prologue_succeeded()) &#123;</span><br><span class="line">  result = op.result();</span><br><span class="line">  <span class="keyword">if</span> (op.gc_locked()) &#123;</span><br><span class="line">     assert(result == NULL, <span class="string">"must be NULL if gc_locked() is true"</span>);</span><br><span class="line">     <span class="keyword">continue</span>;  <span class="comment">// retry and/or stall as necessary</span></span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果执行完gc，但是花费了很多时间，才回收下很少内存，返回NULL，并且给<code>gc_overhead_limit_was_exceeded</code>赋值。</p>
+</li>
+<li>gc并分配成功，返回结果。</li>
+</ol>
+</li>
+</ul>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+	<div class="article-share" id="share">
+	
+	  <div data-url="http://jangzq.info/2015/07/26/GenCollectedHeap_allocate/" data-title="分代内存管理之慢速路径内存分配 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  </div>
+	
+	</div>
+
+
+</footer>
+
+   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+
+<div class="next">
+<a href="/2015/07/05/new/"  title="通过解释器的new操作看内存分配">
+ <strong>下一篇：</strong><br/> 
+ <span>通过解释器的new操作看内存分配
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="显示侧边栏"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">文章目录</strong>
+ 
+ 
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="隐藏侧边栏"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+<div class="tagslist">
+	<p class="asidetitle">标签</p>
+		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>5</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>1</sup></a></li>
+			
+		
+		</ul>
+</div>
+
+
+  <div class="linkslist">
+  <p class="asidetitle">友情链接</p>
+    <ul>
+        
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS 订阅</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	
+	<section class="info">
+		<p> Jangzq&#39;s blog <br/>
+			Focus on the secret of code!</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		<a href="http://weibo.com/Jangzq" target="_blank" class="icon-weibo" title="微博"></a>
+		
+		
+		<a href="https://github.com/Jangzq" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:zqzhangmail@163.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+			
+		
+
+		<p class="copyright">
+		Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Jacman">Jacman</a> © 2015 
+		
+		<a href="/about" target="_blank" title="Zhang Zq">Zhang Zq</a>
+		
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script src="/js/jquery.imagesloaded.min.js"></script>
+<script src="/js/gallery.js"></script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+  
+        getSize();
+        if (myWidth >= 1024) {
+          c.click();
+        }
+  
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else{
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  c.click(function(){
+    ta.css('display', 'block').addClass('fadeIn');
+  });
+  o.click(function(){
+    ta.css('display', 'none');
+  });
+  $(window).scroll(function(){
+    ta.css("top",Math.max(140,320-$(this).scrollTop()));
+  });
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#nothing"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="微信"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="微博"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+<!-- Analytics Begin -->
+
+
+
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3F435d1985a249fde8415798105b4f848b' type='text/javascript'%3E%3C/script%3E"));
+</script>
+
+
+
+<!-- Analytics End -->
+
+<!-- Totop Begin -->
+
+	<div id="totop">
+	<a title="返回顶部"><img src="/img/scrollup.png"/></a>
+	</div>
+	<script src="/js/totop.js"></script>
+
+<!-- Totop End -->
+
+<!-- MathJax Begin -->
+<!-- mathjax config similar to math.stackexchange -->
+
+
+<!-- MathJax End -->
+
+<!-- Tiny_search Begin -->
+
+<!-- Tiny_search End -->
+
+  </body>
+</html>

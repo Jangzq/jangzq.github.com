@@ -77,6 +77,75 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
+      <a href="/2015/07/26/GenCollectedHeap_allocate/" title="分代内存管理之慢速路径内存分配" itemprop="url">分代内存管理之慢速路径内存分配</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-26T03:45:47.000Z" itemprop="datePublished"> 发表于 2015-07-26</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>分代的内存管理使用GenCollectedHeap。generation的类如下：</p>
+<p><img src="/images/generation.png" alt="Generation"></p>
+<p>在这里我们主要剖析慢速路径使用的GenCollectedHeap::mem_allocate方法。其内存分配委托给了相应的CollectorPolicy实现。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">return</span> collector_policy()-&gt;mem_allocate_work(size,</span><br><span class="line">                                             <span class="keyword">false</span> <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                                             gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure>
+<p>所以，下面剖析GenCollectorPolicy::mem_allocate_work的实现。</p>
+<ul>
+<li><p>内存分配的逻辑在下列循环中，说明此方法只有两个出口，或者分配成功，或者抛出异常。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> try_count = <span class="number">1</span>; <span class="comment">/* return or throw */</span>; try_count += <span class="number">1</span>) </span><br><span class="line">&#123;</span><br><span class="line">	....</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>分代的内存管理，在Young generation里实现无锁的分配方式，从assert中可以看出，Young generation必须满足<code>supports_inline_contig_alloc</code>，即必须满足，在堆中必须有一块儿连续的空间，可用范围由top_addr()，end_addr()决定的，并且可以靠移动top_addr来分配内存。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">assert(gen0-&gt;supports_inline_contig_alloc(),</span><br><span class="line">      <span class="string">"Otherwise, must do alloc within heap lock"</span>);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>接下来，在Young generation进行无锁分配。</p>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/07/26/GenCollectedHeap_allocate/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
       <a href="/2015/07/05/new/" title="通过解释器的new操作看内存分配" itemprop="url">通过解释器的new操作看内存分配</a>
   </h1>
   <p class="article-author">By
@@ -417,7 +486,7 @@
 		<ul class="clearfix">
 		
 			
-				<li><a href="/tags/jvm/" title="jvm">jvm<sup>4</sup></a></li>
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>5</sup></a></li>
 			
 		
 			

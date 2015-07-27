@@ -77,6 +77,66 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
+      <a href="/2015/07/27/GenCollectedHeap_size/" title="分代内存管理之Generation Size" itemprop="url">分代内存管理之Generation Size</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-27T14:04:41.000Z" itemprop="datePublished"> 发表于 2015-07-27</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>分代内存管理中各个generation的内存大小设置，保存在CollectorPolicy及其子类里，如下图所示。<br><img src="/images/gen_size.png" alt="CollectorPolicy"><br>从图中可以看出，CollectorPolicy类管理heap的大小，GenCollectorPolicy类管理着Generation 0的大小，而TwoGenerationCollectorPolicy管理着Generation 1的大小。</p>
+<h2 id="Heap大小">Heap大小</h2><p>见：<a href="http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/">垃圾收集框架：CollectedHeap和CollectorPolicy</a></p>
+<h2 id="Generation">Generation</h2><p><strong>Generation大小必须以<code>min_alignment()</code>对齐，一般为64k，并且最小不能小于<code>min_alignment()</code>。为了描述方便，下文有的地方省略对齐及最小值调整部分，请知晓</strong></p>
+<h3 id="Generation_0">Generation 0</h3>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/07/27/GenCollectedHeap_size/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
       <a href="/2015/07/26/GenCollectedHeap_allocate/" title="分代内存管理之慢速路径内存分配" itemprop="url">分代内存管理之慢速路径内存分配</a>
   </h1>
   <p class="article-author">By
@@ -486,7 +546,7 @@
 		<ul class="clearfix">
 		
 			
-				<li><a href="/tags/jvm/" title="jvm">jvm<sup>5</sup></a></li>
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>6</sup></a></li>
 			
 		
 			

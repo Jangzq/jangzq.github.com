@@ -5,7 +5,7 @@
   <subtitle><![CDATA[关注代码的秘密， 记录探索点滴， 分享技术收获]]></subtitle>
   <link href="/atom.xml" rel="self"/>
   <link href="http://jangzq.info//"/>
-  <updated>2015-07-26T12:39:01.000Z</updated>
+  <updated>2015-07-27T14:17:51.000Z</updated>
   <id>http://jangzq.info//</id>
   
   <author>
@@ -14,6 +14,64 @@
   </author>
   
   <generator uri="http://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title><![CDATA[分代内存管理之Generation Size]]></title>
+    <link href="http://jangzq.info/2015/07/27/GenCollectedHeap_size/"/>
+    <id>http://jangzq.info/2015/07/27/GenCollectedHeap_size/</id>
+    <published>2015-07-27T14:04:41.000Z</published>
+    <updated>2015-07-27T14:17:51.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>分代内存管理中各个generation的内存大小设置，保存在CollectorPolicy及其子类里，如下图所示。<br><img src="/images/gen_size.png" alt="CollectorPolicy"><br>从图中可以看出，CollectorPolicy类管理heap的大小，GenCollectorPolicy类管理着Generation 0的大小，而TwoGenerationCollectorPolicy管理着Generation 1的大小。</p>
+<h2 id="Heap大小">Heap大小</h2><p>见：<a href="http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/">垃圾收集框架：CollectedHeap和CollectorPolicy</a></p>
+<h2 id="Generation">Generation</h2><p><strong>Generation大小必须以<code>min_alignment()</code>对齐，一般为64k，并且最小不能小于<code>min_alignment()</code>。为了描述方便，下文有的地方省略对齐及最小值调整部分，请知晓</strong></p>
+<h3 id="Generation_0">Generation 0</h3><a id="more"></a>
+<h4 id="_max_gen0_size">_max_gen0_size</h4><p>首先，计算中间值max_new_size。</p>
+<ul>
+<li>当设置了MaxNewSize参数，_max_gen0_size由此参数决定。<ol>
+<li>如果MaxNewSize小于最小对齐粒度<code>min_alignment()</code>（一般为64k），则max_new_size设为<code>min_alignment()</code>。</li>
+<li>如果大于设置的“堆的最大值”<code>max_heap_byte_size()</code>，则设为<code>align_size_down(max_heap_byte_size() - min_alignment(), min_alignment())</code></li>
+<li>否则，设为MaxNewSize，按最小对齐粒度对齐, <code>align_size_down(MaxNewSize, min_alignment())</code>。</li>
+</ol>
+</li>
+<li>当没有设置MaxNewSize参数时，设为“堆的最大值”/(NewRatio+1)，NewRatio缺省为2, 当这个值小于最小对齐粒度<code>min_alignment()</code>（一般为64k），则max_new_size设为<code>min_alignment()</code>。<br>上述结果再根据设置的“堆的最大值”和“堆的最小值”进行调整。</li>
+<li>如果“堆的最大值”等于“堆的最小值”，max_new_size不变。</li>
+<li>如果“堆的最大值”不等于“堆的最小值”，如果设置了NewSize，则max_new_size取（max_new_size， NewSize)两者最大的。<br>最后，设置_max_gen0_size为max_new_size，如果超过了“堆的最大值”，设为<code>align_size_down(max_heap_byte_size() - min_alignment(), min_alignment())</code>。</li>
+</ul>
+<h4 id="_initial_gen0_size">_initial_gen0_size</h4><ul>
+<li>如果“堆的最大值”和“堆的最小值”相等， _initial_gen0_size设为max_new_size，</li>
+<li>如果“堆的最大值”不等于“堆的最小值”，如果设置了NewSize参数，则设为NewSize。如果没有设置NewSize，设为“堆的初始值”/(NewRatio+1)，和NewSize缺省值之间最大的。</li>
+</ul>
+<p>最后，根据“heap的初始值”进行调整，如果超过了“Heap的初始值” (<code>_initial_heap_byte_size</code>)，设为<code>align_size_down(initial_heap_byte_size() - min_alignment(), min_alignment())</code>。</p>
+<p><strong>注:</strong> <em>在设置OLD Generation大小时，如果设置了OldSize，并且OldSize+_initial_gen0_size大于“堆的初始值”时，会调整此值。</em></p>
+<h4 id="_min_gen0_size">_min_gen0_size</h4><ul>
+<li>如果“堆的最大值”和“堆的最小值”相等， _min_gen0_size设为max_new_size，</li>
+<li>如果“堆的最大值”不等于“堆的最小值”，如果设置了NewSize参数，则设为NewSize。如果没有设置NewSize，设为“堆的最小值”/(NewRatio+1)，和NewSize缺省值之间最大的。</li>
+</ul>
+<p>最后，根据“heap的初始值”进行调整，如果超过了“Heap的最小值” (<code>_min_heap_byte_size</code>)，设为<code>align_size_down(min_heap_byte_size() - min_alignment(), min_alignment())</code>。</p>
+<p><strong>注:</strong> <em>在设置OLD Generation大小时，如果设置了OldSize，并且OldSize+_min_gen0_size大于“堆的最小值”时，会调整此值。</em></p>
+<h3 id="Generation_1">Generation 1</h3><h4 id="_max_gen1_size">_max_gen1_size</h4><p>设为“堆最大值”-_max_gen0_size，和min_alignment()的最大值。</p>
+<h4 id="_initial_gen1_size">_initial_gen1_size</h4><ul>
+<li>如果没有设置OldSize，设置为initial_heap_byte_size() - initial_gen0_size()。</li>
+<li>如果设置了OldSize，此值设置为OldSize，如果_initial_gen0_size+OldSize 大于“堆的初始值”，则需要调整_initial_gen0_size。</li>
+</ul>
+<h4 id="_min_gen1_size">_min_gen1_size</h4><ul>
+<li>如果没有设置OldSize，设置为initial_heap_byte_size() - _min_gen0_size。</li>
+<li>如果设置了OldSize，此值设置为OldSize，如果_min_gen0_size+OldSize 大于“堆的最小值”，则需要调整_min_gen0_size。</li>
+</ul>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>分代内存管理中各个generation的内存大小设置，保存在CollectorPolicy及其子类里，如下图所示。<br><img src="/images/gen_size.png" alt="CollectorPolicy"><br>从图中可以看出，CollectorPolicy类管理heap的大小，GenCollectorPolicy类管理着Generation 0的大小，而TwoGenerationCollectorPolicy管理着Generation 1的大小。</p>
+<h2 id="Heap大小">Heap大小</h2><p>见：<a href="http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/">垃圾收集框架：CollectedHeap和CollectorPolicy</a></p>
+<h2 id="Generation">Generation</h2><p><strong>Generation大小必须以<code>min_alignment()</code>对齐，一般为64k，并且最小不能小于<code>min_alignment()</code>。为了描述方便，下文有的地方省略对齐及最小值调整部分，请知晓</strong></p>
+<h3 id="Generation_0">Generation 0</h3>]]>
+    
+    </summary>
+    
+      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
+    
+  </entry>
   
   <entry>
     <title><![CDATA[分代内存管理之慢速路径内存分配]]></title>

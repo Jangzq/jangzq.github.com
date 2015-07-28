@@ -5,7 +5,7 @@
   <subtitle><![CDATA[关注代码的秘密， 记录探索点滴， 分享技术收获]]></subtitle>
   <link href="/atom.xml" rel="self"/>
   <link href="http://jangzq.info//"/>
-  <updated>2015-07-27T14:17:51.000Z</updated>
+  <updated>2015-07-28T13:41:36.000Z</updated>
   <id>http://jangzq.info//</id>
   
   <author>
@@ -14,6 +14,75 @@
   </author>
   
   <generator uri="http://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title><![CDATA[分代内存管理之内存初始化]]></title>
+    <link href="http://jangzq.info/2015/07/28/GenCollectedHeap_meminit/"/>
+    <id>http://jangzq.info/2015/07/28/GenCollectedHeap_meminit/</id>
+    <published>2015-07-28T13:30:58.000Z</published>
+    <updated>2015-07-28T13:41:36.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>分代内存管理的内存初始化入口在：GenCollectedHeap::initialize。</p>
+<h2 id="整体分配内存">整体分配内存</h2><p>在GenCollectedHeap::allocate方法中。在此之前，初始化CollectorPolicy时，已经计算了各个Generation的最大、最小、初始值，并且初始化了GenerationSpec数组。计算大小的过程见：<a href="http://jangzq.info/2015/07/27/GenCollectedHeap_size/">分代内存管理之Generation Size</a><br><strong>注:</strong> 由于UseSharedSpaces只适用于Client mode，所以在此不分析相关代码。<br><strong>注：</strong> 这部分所说的分配内存，并不是真正的分配物理内存，而是在地址空间分配一段内存地址空间，在linux下使用mmap的匿名映射实现，当访问其中的某一地址时，产生缺页中断，由操作系统分配真实物理内存。</p>
+<ul>
+<li><p>计算需要的内存大小。</p>
+<ol>
+<li><p>遍历各个Generation Spec，将其最大内存相加。</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"></span><br><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; _n_gens; i++) &#123;</span><br><span class="line">  total_reserved = add_and_check_overflow(total_reserved, _gen_specs[i]-&gt;max_size());</span><br><span class="line">  n_covered_regions += _gen_specs[i]-&gt;n_covered_regions();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>再加上Perm区域的最大内存，及misc_data_size()、misc_code_size()<br>misc_data_size()、misc_code_size()并包含在heap内，只是在这里一起分配。</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">total_reserved = add_and_check_overflow(total_reserved, perm_gen_spec-&gt;max_size());</span><br><span class="line"><span class="keyword">size_t</span> misc = perm_gen_spec-&gt;misc_data_size() + perm_gen_spec-&gt;misc_code_size();</span><br><span class="line">total_reserved = add_and_check_overflow(total_reserved, misc);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+</ul>
+<a id="more"></a>
+<ul>
+<li><p>在使用压缩指针的情况下，需要确定heap的base address，和指针的encoding mode，然后在base address上分配，如果分配不成功，则整个虚拟机初始化失败。<br>hotspot中存在三种encoding mode:</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">enum</span> NARROW_OOP_MODE &#123;</span><br><span class="line">  UnscaledNarrowOop  = <span class="number">0</span>,</span><br><span class="line">  ZeroBasedNarrowOop = <span class="number">1</span>,</span><br><span class="line">  HeapBasedNarrowOop = <span class="number">2</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+<p>当heap内存小于4G的情况下，如果把heap分配到4G以下，则原64位指针，narrow为32位，即可作为narrow指针，这种情况即UnscaledNarrowOop。当内存大于4G，小于32G时，如果可以分配在32G以下的部分，则可以base为0,而shift为    LogMinObjAlignmentInBytes (默认为3)，这种对应的情况为ZeroBasedNarrowOop。如果不能分配在32G以下，则原64位指针需要减去一个base，再使用shift，转换为narrow的指针，这种情况即HeapBasedNarrowOop。<br> 如下面程序， 依次尝试 UnscaledNarrowOop、ZeroBasedNarrowOop、HeapBasedNarrowOop三种分配方式，分配成功即返回</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">heap_address = Universe::preferred_heap_base(total_reserved, alignment, Universe::UnscaledNarrowOop);</span><br><span class="line">*<span class="keyword">_t</span>otal_reserved = total_reserved;</span><br><span class="line">*_n_covered_regions = n_covered_regions;</span><br><span class="line">*heap_rs = ReservedHeapSpace(total_reserved, alignment,</span><br><span class="line">                             UseLargePages, heap_address);</span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> (heap_address != NULL &amp;&amp; !heap_rs-&gt;is_reserved()) &#123;</span><br><span class="line">  <span class="comment">// Failed to reserve at specified address - the requested memory</span></span><br><span class="line">  <span class="comment">// region is taken already, for example, by 'java' launcher.</span></span><br><span class="line">  <span class="comment">// Try again to reserver heap higher.</span></span><br><span class="line">  heap_address = Universe::preferred_heap_base(total_reserved, alignment, Universe::ZeroBasedNarrowOop);</span><br><span class="line">  *heap_rs = ReservedHeapSpace(total_reserved, alignment,</span><br><span class="line">                               UseLargePages, heap_address);</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (heap_address != NULL &amp;&amp; !heap_rs-&gt;is_reserved()) &#123;</span><br><span class="line">    <span class="comment">// Failed to reserve at specified address again - give up.</span></span><br><span class="line">    heap_address = Universe::preferred_heap_base(total_reserved, alignment, Universe::HeapBasedNarrowOop);</span><br><span class="line">    assert(heap_address == NULL, <span class="string">""</span>);</span><br><span class="line">    *heap_rs = ReservedHeapSpace(total_reserved, alignment,</span><br><span class="line">                                 UseLargePages, heap_address);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">return</span> heap_address;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果没有使用压缩指针，则直接分配内存。</p>
+  <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">*<span class="keyword">_t</span>otal_reserved = total_reserved;</span><br><span class="line">*_n_covered_regions = n_covered_regions;</span><br><span class="line">*heap_rs = ReservedHeapSpace(total_reserved, alignment,</span><br><span class="line">                          UseLargePages, heap_address);</span><br></pre></td></tr></table></figure>
+</li>
+</ul>
+<h2 id="初始化CollectedHeap::_reserved">初始化CollectedHeap::_reserved</h2><p>定义：<code>MemRegion _reserved</code></p>
+<ul>
+<li>HeapWord* _start 设置为分配的地址。</li>
+<li>size_t    _word_size 设置为实际的大小，即排除了misc_data_size()、misc_code_size()的大小。 <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">size_t</span> actual_heap_size = heap_rs.size() - perm_gen_spec-&gt;misc_data_size()</span><br><span class="line">                                          - perm_gen_spec-&gt;misc_code_size();</span><br><span class="line">       _reserved.set_end((HeapWord*)(heap_rs.base() + actual_heap_size));</span><br></pre></td></tr></table></figure>
+</li>
+</ul>
+<h2 id="初始化Generation">初始化Generation</h2><p>对于所有的Generation，循环初始化。</p>
+<ol>
+<li>使用上文分配的地址范围，依次构造ReservedSpace对象（使用每一Generation的内存最大值），来描述每一个Generation的内存范围。</li>
+<li>调用Generation Spec的init方法初始化。</li>
+<li>初始化Perm Generation。<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">   <span class="keyword">for</span> (i = <span class="number">0</span>; i &lt; _n_gens; i++) &#123;</span><br><span class="line">    ReservedSpace this_rs = heap_rs.first_part(_gen_specs[i]-&gt;max_size(),</span><br><span class="line">                                              UseSharedSpaces, UseSharedSpaces);</span><br><span class="line">    _gens[i] = _gen_specs[i]-&gt;init(this_rs, i, rem_set());</span><br><span class="line">    <span class="comment">// tag generations in JavaHeap</span></span><br><span class="line">    MemTracker::<span class="keyword">record_virtual_memory_t</span>ype((address)this_rs.base(), mtJavaHeap);</span><br><span class="line">    heap_rs = heap_rs.last_part(_gen_specs[i]-&gt;max_size());</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">_perm_gen = perm_gen_spec-&gt;init(heap_rs, PermSize, rem_set());</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>分代内存管理的内存初始化入口在：GenCollectedHeap::initialize。</p>
+<h2 id="整体分配内存">整体分配内存</h2><p>在GenCollectedHeap::allocate方法中。在此之前，初始化CollectorPolicy时，已经计算了各个Generation的最大、最小、初始值，并且初始化了GenerationSpec数组。计算大小的过程见：<a href="http://jangzq.info/2015/07/27/GenCollectedHeap_size/">分代内存管理之Generation Size</a><br><strong>注:</strong> 由于UseSharedSpaces只适用于Client mode，所以在此不分析相关代码。<br><strong>注：</strong> 这部分所说的分配内存，并不是真正的分配物理内存，而是在地址空间分配一段内存地址空间，在linux下使用mmap的匿名映射实现，当访问其中的某一地址时，产生缺页中断，由操作系统分配真实物理内存。</p>
+<ul>
+<li><p>计算需要的内存大小。</p>
+<ol>
+<li><p>遍历各个Generation Spec，将其最大内存相加。</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"></span><br><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; _n_gens; i++) &#123;</span><br><span class="line">  total_reserved = add_and_check_overflow(total_reserved, _gen_specs[i]-&gt;max_size());</span><br><span class="line">  n_covered_regions += _gen_specs[i]-&gt;n_covered_regions();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>再加上Perm区域的最大内存，及misc_data_size()、misc_code_size()<br>misc_data_size()、misc_code_size()并包含在heap内，只是在这里一起分配。</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">total_reserved = add_and_check_overflow(total_reserved, perm_gen_spec-&gt;max_size());</span><br><span class="line"><span class="keyword">size_t</span> misc = perm_gen_spec-&gt;misc_data_size() + perm_gen_spec-&gt;misc_code_size();</span><br><span class="line">total_reserved = add_and_check_overflow(total_reserved, misc);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+</ul>]]>
+    
+    </summary>
+    
+      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
+    
+  </entry>
   
   <entry>
     <title><![CDATA[分代内存管理之Generation Size]]></title>

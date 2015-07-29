@@ -1,0 +1,457 @@
+
+ <!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  
+    <title>分代内存管理之垃圾收集 | Jangzq技术研究</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="Zhang Zq">
+    
+
+    
+    <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+VM_GenCollectForAllocation在分代内存管理之慢速路径内存分配中提到，当分配内存不成功时，使用VM_GenCollectForAllocation来进行GC并且分配，下面详细描述。在VM_GenCollectForAllocation::doit() 方法中，调用了GenCollectedHeap的satisfy">
+<meta property="og:type" content="article">
+<meta property="og:title" content="分代内存管理之垃圾收集">
+<meta property="og:url" content="http://jangzq.info/2015/07/29/GenCollectedHeap_collect/index.html">
+<meta property="og:site_name" content="Jangzq技术研究">
+<meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+VM_GenCollectForAllocation在分代内存管理之慢速路径内存分配中提到，当分配内存不成功时，使用VM_GenCollectForAllocation来进行GC并且分配，下面详细描述。在VM_GenCollectForAllocation::doit() 方法中，调用了GenCollectedHeap的satisfy">
+<meta property="og:updated_time" content="2015-07-29T13:54:40.000Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="分代内存管理之垃圾收集">
+<meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+VM_GenCollectForAllocation在分代内存管理之慢速路径内存分配中提到，当分配内存不成功时，使用VM_GenCollectForAllocation来进行GC并且分配，下面详细描述。在VM_GenCollectForAllocation::doit() 方法中，调用了GenCollectedHeap的satisfy">
+
+    
+    <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+</head>
+
+  <body>
+    <header>
+      
+<div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="Jangzq技术研究">Jangzq技术研究</a></h1>
+				<h2 class="blog-motto">关注代码的秘密， 记录探索点滴， 分享技术收获</h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="菜单">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">主页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于我</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="搜索" />
+						<input type="hidden" name="q" value="site:jangzq.info">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+  
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/07/29/GenCollectedHeap_collect/" title="分代内存管理之垃圾收集" itemprop="url">分代内存管理之垃圾收集</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-29T13:51:12.000Z" itemprop="datePublished"> 发表于 2015-07-29</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">文章目录</strong>
+		
+			<ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#VM_GenCollectForAllocation"><span class="toc-number">1.</span> <span class="toc-text">VM_GenCollectForAllocation</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#GenCollectedHeap::do_collection"><span class="toc-number">2.</span> <span class="toc-text">GenCollectedHeap::do_collection</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#附录"><span class="toc-number">3.</span> <span class="toc-text">附录</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#should_collect"><span class="toc-number">3.1.</span> <span class="toc-text">should_collect</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#DefNewGeneration及其子类"><span class="toc-number">3.1.1.</span> <span class="toc-text">DefNewGeneration及其子类</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#TenuredGeneration"><span class="toc-number">3.1.2.</span> <span class="toc-text">TenuredGeneration</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#ConcurrentMarkSweepGeneration"><span class="toc-number">3.1.3.</span> <span class="toc-text">ConcurrentMarkSweepGeneration</span></a></li></ol></li></ol></li></ol>
+		
+		</div>
+		
+		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<h2 id="VM_GenCollectForAllocation">VM_GenCollectForAllocation</h2><p>在<a href="http://jangzq.info/2015/07/26/GenCollectedHeap_allocate/">分代内存管理之慢速路径内存分配</a>中提到，当分配内存不成功时，使用VM_GenCollectForAllocation来进行GC并且分配，下面详细描述。<br>在<code>VM_GenCollectForAllocation::doit()</code> 方法中，调用了<code>GenCollectedHeap</code>的<code>satisfy_failed_allocation</code>方法，此方法又委托给了<code>GenCollectorPolicy::satisfy_failed_allocation</code>方法，下面即这个方法的实现方式。</p>
+<ol>
+<li><p>如果当前有jni方法在critical区域，并且有线程要求gc，则不能再请求GC，否则白白阻塞，所以heap如果还有扩展的空间，则扩展，并且分配。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (GC_locker::is_active_and_needs_gc()) &#123;</span><br><span class="line"> <span class="comment">// GC locker is active; instead of a collection we will attempt</span></span><br><span class="line"> <span class="comment">// to expand the heap, if there's room for expansion.</span></span><br><span class="line">   <span class="keyword">if</span> (!gch-&gt;is_maximal_no_gc()) &#123;</span><br><span class="line">      result = expand_heap_and_allocate(size, <span class="keyword">is_t</span>lab);</span><br><span class="line">   &#125;</span><br><span class="line">   <span class="keyword">return</span> result;   <span class="comment">// could be null if we are out of space</span></span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果GC没有被阻塞，则根据GenCollectedHeap的incremental_collection_will_fail决定进行full gc还是incremental gc. 如果incremental_collection_will_fail返回true，说明incremental gc将要失败，所以需要进行full gc。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!gch-&gt;incremental_collection_will_fail(<span class="keyword">false</span> <span class="comment">/* don't consult_young */</span>)) &#123;</span><br><span class="line">  <span class="comment">// Do an incremental collection.</span></span><br><span class="line">  gch-&gt;do_collection(<span class="keyword">false</span>            <span class="comment">/* full */</span>,</span><br><span class="line">                     <span class="keyword">false</span>            <span class="comment">/* clear_all_soft_refs */</span>,</span><br><span class="line">                     size             <span class="comment">/* size */</span>,</span><br><span class="line">                     <span class="keyword">is_t</span>lab          <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                     number_of_generations() - <span class="number">1</span> <span class="comment">/* max_level */</span>);</span><br><span class="line">&#125; <span class="keyword">else</span> &#123; </span><br><span class="line">  <span class="keyword">if</span> (Verbose &amp;&amp; PrintGCDetails) &#123;</span><br><span class="line">    <span class="keyword">gclog_or_t</span>ty-&gt;print(<span class="string">" :: Trying full because partial may fail :: "</span>);</span><br><span class="line">  &#125; </span><br><span class="line">  gch-&gt;do_collection(<span class="keyword">true</span>             <span class="comment">/* full */</span>,</span><br><span class="line">                     <span class="keyword">false</span>            <span class="comment">/* clear_all_soft_refs */</span>,</span><br><span class="line">                     size             <span class="comment">/* size */</span>,</span><br><span class="line">                     <span class="keyword">is_t</span>lab          <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                     number_of_generations() - <span class="number">1</span> <span class="comment">/* max_level */</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>垃圾收集完成后，继续尝试分配内存，如果不成功，则尝试扩展堆大小，然后再次分配。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">result = gch-&gt;attempt_allocation(size, <span class="keyword">is_t</span>lab, <span class="keyword">false</span> <span class="comment">/*first_only*/</span>);</span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">  assert(gch-&gt;is_in_reserved(result), <span class="string">"result not in heap"</span>);</span><br><span class="line">  <span class="keyword">return</span> result;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">// OK, collection failed, try expansion.</span></span><br><span class="line">result = expand_heap_and_allocate(size, <span class="keyword">is_t</span>lab);</span><br><span class="line"><span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">  <span class="keyword">return</span> result;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果还是不能成功分配，则进行一次full gc，并且清除所有soft reference。然后再次分配，如果成功，返回地址，否则返回NULL。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">  gch-&gt;do_collection(<span class="keyword">true</span>             <span class="comment">/* full */</span>,</span><br><span class="line">                     <span class="keyword">true</span>             <span class="comment">/* clear_all_soft_refs */</span>,</span><br><span class="line">                     size             <span class="comment">/* size */</span>,</span><br><span class="line">                     <span class="keyword">is_t</span>lab          <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                     number_of_generations() - <span class="number">1</span> <span class="comment">/* max_level */</span>);</span><br><span class="line"> result = gch-&gt;attempt_allocation(size, <span class="keyword">is_t</span>lab, <span class="keyword">false</span> <span class="comment">/* first_only */</span>);</span><br><span class="line"><span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">  assert(gch-&gt;is_in_reserved(result), <span class="string">"result not in heap"</span>);</span><br><span class="line">  <span class="keyword">return</span> result;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">assert(!should_clear_all_soft_refs(),</span><br><span class="line">  <span class="string">"Flag should have been handled and cleared prior to this point"</span>);</span><br><span class="line"></span><br><span class="line"><span class="comment">// What else?  We might try synchronous finalization later.  If the total</span></span><br><span class="line"><span class="comment">// space available is large enough for the allocation, then a more</span></span><br><span class="line"><span class="comment">// complete compaction phase than we've tried so far might be</span></span><br><span class="line"><span class="comment">// appropriate.</span></span><br><span class="line"><span class="keyword">return</span> NULL;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h2 id="GenCollectedHeap::do_collection">GenCollectedHeap::do_collection</h2><ol>
+<li><p>如果当前有线程进行jni操作，并且位于critical区域，则直接退出。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (GC_locker::check_active_before_gc()) &#123;</span><br><span class="line">   <span class="keyword">return</span>; <span class="comment">// GC is disabled (e.g. JNI Get<span class="doctag"><span class="keyword">XXX</span></span>Critical operation)</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>执行gc_prologue。</p>
+<ol>
+<li>处理TLAB，见 <a href="http://jangzq.info/2015/06/28/tlab/">HotSpot的TLAB实现解析</a>。</li>
+<li>调用各个Generation的gc_prologue。</li>
+</ol>
+</li>
+<li><p>如果是full gc，则需要找到开始回收的，最老的generation，这通过调用Generation的full_collects_younger_generations方法得到，当对此generation进行回收时，同时会回收更新的generation时，返回true。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (full) &#123;</span><br><span class="line">   <span class="comment">// Search for the oldest generation which will collect all younger</span></span><br><span class="line">   <span class="comment">// generations, and start collection loop there.</span></span><br><span class="line">   <span class="keyword">for</span> (<span class="keyword">int</span> i = max_level; i &gt;= <span class="number">0</span>; i--) &#123;</span><br><span class="line">     <span class="keyword">if</span> (_gens[i]-&gt;full_collects_younger_generations()) &#123;</span><br><span class="line">       starting_level = i;</span><br><span class="line">       <span class="keyword">break</span>;</span><br><span class="line">     &#125;</span><br><span class="line">   &#125;</span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>从上一步得到的starting_level到最老的generation,依照从young到old的次序进行垃圾回收。<br> 对于每一个generation。</p>
+<ol>
+<li>首先，使用<code>_gens[i]-&gt;should_collect(full, size, is_tlab)</code>方法判断是否需要在此generation上进行collect。<br> 见附录。</li>
+<li>调用generation的collect方法，进行回收，见后续文章。</li>
+<li>检查是否满足分配。<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (size &gt; <span class="number">0</span>) &#123;</span><br><span class="line">  <span class="keyword">if</span> (!<span class="keyword">is_t</span>lab || _gens[i]-&gt;<span class="keyword">supports_t</span>lab_allocation()) &#123;</span><br><span class="line">    <span class="keyword">if</span> (size*HeapWordSize &lt;= _gens[i]-&gt;unsafe_max_alloc_nogc()) &#123;</span><br><span class="line">      size = <span class="number">0</span>;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+<li><p>重新计算每个generation的大小,如果是full gc，则重新计算Perm的大小。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> j = max_level_collected; j &gt;= <span class="number">0</span>; j -= <span class="number">1</span>) &#123;</span><br><span class="line">  <span class="comment">// Adjust generation sizes.</span></span><br><span class="line">  _gens[j]-&gt;compute_new_size();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> (complete) &#123;</span><br><span class="line">  <span class="comment">// Ask the permanent generation to adjust size for full collections</span></span><br><span class="line">  perm()-&gt;compute_new_size();</span><br><span class="line">  update_full_collections_completed();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>调用 gc_epilogue</p>
+<ol>
+<li>重新调整TLAB大小，见<a href="http://jangzq.info/2015/06/28/tlab/">HotSpot的TLAB实现解析</a>。</li>
+<li>调用每个generation上的 gc_epilogue。<br>见后续文章。</li>
+</ol>
+</li>
+</ol>
+<h2 id="附录">附录</h2><h3 id="should_collect">should_collect</h3><p>介绍每个generation的should_collect的实现方式。</p>
+<h4 id="DefNewGeneration及其子类">DefNewGeneration及其子类</h4><p>如果是full，则返回true，否则判断需要分配的内存是否可以在此generation分配，如果不可以，就不需要回收此generation。<br> <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">return</span> (full || should_allocate(word_size, <span class="keyword">is_t</span>lab));</span><br></pre></td></tr></table></figure></p>
+<h4 id="TenuredGeneration">TenuredGeneration</h4><p>full gc， 或者需要分配的内存是否可以在此generation分配， 或者剩余空间少于10k，或者gc开始时的capacity，小于目前的capacity，即说明为了容纳young generation上移的内存，造成了本generationde 扩展。</p>
+<h4 id="ConcurrentMarkSweepGeneration">ConcurrentMarkSweepGeneration</h4><p>如果是full，则返回true，否则判断需要分配的内存是否可以在此generation分配，如果不可以，就不需要回收此generation。</p>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+	<div class="article-share" id="share">
+	
+	  <div data-url="http://jangzq.info/2015/07/29/GenCollectedHeap_collect/" data-title="分代内存管理之垃圾收集 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  </div>
+	
+	</div>
+
+
+</footer>
+
+   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+
+<div class="next">
+<a href="/2015/07/28/GenCollectedHeap_meminit/"  title="分代内存管理之内存初始化">
+ <strong>下一篇：</strong><br/> 
+ <span>分代内存管理之内存初始化
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="显示侧边栏"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">文章目录</strong>
+ 
+ <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#VM_GenCollectForAllocation"><span class="toc-number">1.</span> <span class="toc-text">VM_GenCollectForAllocation</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#GenCollectedHeap::do_collection"><span class="toc-number">2.</span> <span class="toc-text">GenCollectedHeap::do_collection</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#附录"><span class="toc-number">3.</span> <span class="toc-text">附录</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#should_collect"><span class="toc-number">3.1.</span> <span class="toc-text">should_collect</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#DefNewGeneration及其子类"><span class="toc-number">3.1.1.</span> <span class="toc-text">DefNewGeneration及其子类</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#TenuredGeneration"><span class="toc-number">3.1.2.</span> <span class="toc-text">TenuredGeneration</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#ConcurrentMarkSweepGeneration"><span class="toc-number">3.1.3.</span> <span class="toc-text">ConcurrentMarkSweepGeneration</span></a></li></ol></li></ol></li></ol>
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="隐藏侧边栏"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+<div class="tagslist">
+	<p class="asidetitle">标签</p>
+		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>8</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>1</sup></a></li>
+			
+		
+		</ul>
+</div>
+
+
+  <div class="linkslist">
+  <p class="asidetitle">友情链接</p>
+    <ul>
+        
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS 订阅</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	
+	<section class="info">
+		<p> Jangzq&#39;s blog <br/>
+			Focus on the secret of code!</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		<a href="http://weibo.com/Jangzq" target="_blank" class="icon-weibo" title="微博"></a>
+		
+		
+		<a href="https://github.com/Jangzq" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:zqzhangmail@163.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+			
+		
+
+		<p class="copyright">
+		Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Jacman">Jacman</a> © 2015 
+		
+		<a href="/about" target="_blank" title="Zhang Zq">Zhang Zq</a>
+		
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script src="/js/jquery.imagesloaded.min.js"></script>
+<script src="/js/gallery.js"></script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+  
+        getSize();
+        if (myWidth >= 1024) {
+          c.click();
+        }
+  
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else{
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  c.click(function(){
+    ta.css('display', 'block').addClass('fadeIn');
+  });
+  o.click(function(){
+    ta.css('display', 'none');
+  });
+  $(window).scroll(function(){
+    ta.css("top",Math.max(140,320-$(this).scrollTop()));
+  });
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#nothing"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="微信"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="微博"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+<!-- Analytics Begin -->
+
+
+
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3F435d1985a249fde8415798105b4f848b' type='text/javascript'%3E%3C/script%3E"));
+</script>
+
+
+
+<!-- Analytics End -->
+
+<!-- Totop Begin -->
+
+	<div id="totop">
+	<a title="返回顶部"><img src="/img/scrollup.png"/></a>
+	</div>
+	<script src="/js/totop.js"></script>
+
+<!-- Totop End -->
+
+<!-- MathJax Begin -->
+<!-- mathjax config similar to math.stackexchange -->
+
+
+<!-- MathJax End -->
+
+<!-- Tiny_search Begin -->
+
+<!-- Tiny_search End -->
+
+  </body>
+</html>

@@ -5,7 +5,7 @@
   <subtitle><![CDATA[关注代码的秘密， 记录探索点滴， 分享技术收获]]></subtitle>
   <link href="/atom.xml" rel="self"/>
   <link href="http://jangzq.info//"/>
-  <updated>2015-07-28T13:41:36.000Z</updated>
+  <updated>2015-07-29T13:54:40.000Z</updated>
   <id>http://jangzq.info//</id>
   
   <author>
@@ -14,6 +14,73 @@
   </author>
   
   <generator uri="http://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title><![CDATA[分代内存管理之垃圾收集]]></title>
+    <link href="http://jangzq.info/2015/07/29/GenCollectedHeap_collect/"/>
+    <id>http://jangzq.info/2015/07/29/GenCollectedHeap_collect/</id>
+    <published>2015-07-29T13:51:12.000Z</published>
+    <updated>2015-07-29T13:54:40.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<h2 id="VM_GenCollectForAllocation">VM_GenCollectForAllocation</h2><p>在<a href="http://jangzq.info/2015/07/26/GenCollectedHeap_allocate/">分代内存管理之慢速路径内存分配</a>中提到，当分配内存不成功时，使用VM_GenCollectForAllocation来进行GC并且分配，下面详细描述。<br>在<code>VM_GenCollectForAllocation::doit()</code> 方法中，调用了<code>GenCollectedHeap</code>的<code>satisfy_failed_allocation</code>方法，此方法又委托给了<code>GenCollectorPolicy::satisfy_failed_allocation</code>方法，下面即这个方法的实现方式。</p>
+<ol>
+<li><p>如果当前有jni方法在critical区域，并且有线程要求gc，则不能再请求GC，否则白白阻塞，所以heap如果还有扩展的空间，则扩展，并且分配。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (GC_locker::is_active_and_needs_gc()) &#123;</span><br><span class="line"> <span class="comment">// GC locker is active; instead of a collection we will attempt</span></span><br><span class="line"> <span class="comment">// to expand the heap, if there's room for expansion.</span></span><br><span class="line">   <span class="keyword">if</span> (!gch-&gt;is_maximal_no_gc()) &#123;</span><br><span class="line">      result = expand_heap_and_allocate(size, <span class="keyword">is_t</span>lab);</span><br><span class="line">   &#125;</span><br><span class="line">   <span class="keyword">return</span> result;   <span class="comment">// could be null if we are out of space</span></span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果GC没有被阻塞，则根据GenCollectedHeap的incremental_collection_will_fail决定进行full gc还是incremental gc. 如果incremental_collection_will_fail返回true，说明incremental gc将要失败，所以需要进行full gc。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!gch-&gt;incremental_collection_will_fail(<span class="keyword">false</span> <span class="comment">/* don't consult_young */</span>)) &#123;</span><br><span class="line">  <span class="comment">// Do an incremental collection.</span></span><br><span class="line">  gch-&gt;do_collection(<span class="keyword">false</span>            <span class="comment">/* full */</span>,</span><br><span class="line">                     <span class="keyword">false</span>            <span class="comment">/* clear_all_soft_refs */</span>,</span><br><span class="line">                     size             <span class="comment">/* size */</span>,</span><br><span class="line">                     <span class="keyword">is_t</span>lab          <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                     number_of_generations() - <span class="number">1</span> <span class="comment">/* max_level */</span>);</span><br><span class="line">&#125; <span class="keyword">else</span> &#123; </span><br><span class="line">  <span class="keyword">if</span> (Verbose &amp;&amp; PrintGCDetails) &#123;</span><br><span class="line">    <span class="keyword">gclog_or_t</span>ty-&gt;print(<span class="string">" :: Trying full because partial may fail :: "</span>);</span><br><span class="line">  &#125; </span><br><span class="line">  gch-&gt;do_collection(<span class="keyword">true</span>             <span class="comment">/* full */</span>,</span><br><span class="line">                     <span class="keyword">false</span>            <span class="comment">/* clear_all_soft_refs */</span>,</span><br><span class="line">                     size             <span class="comment">/* size */</span>,</span><br><span class="line">                     <span class="keyword">is_t</span>lab          <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                     number_of_generations() - <span class="number">1</span> <span class="comment">/* max_level */</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>垃圾收集完成后，继续尝试分配内存，如果不成功，则尝试扩展堆大小，然后再次分配。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">result = gch-&gt;attempt_allocation(size, <span class="keyword">is_t</span>lab, <span class="keyword">false</span> <span class="comment">/*first_only*/</span>);</span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">  assert(gch-&gt;is_in_reserved(result), <span class="string">"result not in heap"</span>);</span><br><span class="line">  <span class="keyword">return</span> result;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">// OK, collection failed, try expansion.</span></span><br><span class="line">result = expand_heap_and_allocate(size, <span class="keyword">is_t</span>lab);</span><br><span class="line"><span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">  <span class="keyword">return</span> result;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果还是不能成功分配，则进行一次full gc，并且清除所有soft reference。然后再次分配，如果成功，返回地址，否则返回NULL。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">  gch-&gt;do_collection(<span class="keyword">true</span>             <span class="comment">/* full */</span>,</span><br><span class="line">                     <span class="keyword">true</span>             <span class="comment">/* clear_all_soft_refs */</span>,</span><br><span class="line">                     size             <span class="comment">/* size */</span>,</span><br><span class="line">                     <span class="keyword">is_t</span>lab          <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                     number_of_generations() - <span class="number">1</span> <span class="comment">/* max_level */</span>);</span><br><span class="line"> result = gch-&gt;attempt_allocation(size, <span class="keyword">is_t</span>lab, <span class="keyword">false</span> <span class="comment">/* first_only */</span>);</span><br><span class="line"><span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">  assert(gch-&gt;is_in_reserved(result), <span class="string">"result not in heap"</span>);</span><br><span class="line">  <span class="keyword">return</span> result;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">assert(!should_clear_all_soft_refs(),</span><br><span class="line">  <span class="string">"Flag should have been handled and cleared prior to this point"</span>);</span><br><span class="line"></span><br><span class="line"><span class="comment">// What else?  We might try synchronous finalization later.  If the total</span></span><br><span class="line"><span class="comment">// space available is large enough for the allocation, then a more</span></span><br><span class="line"><span class="comment">// complete compaction phase than we've tried so far might be</span></span><br><span class="line"><span class="comment">// appropriate.</span></span><br><span class="line"><span class="keyword">return</span> NULL;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h2 id="GenCollectedHeap::do_collection">GenCollectedHeap::do_collection</h2><ol>
+<li><p>如果当前有线程进行jni操作，并且位于critical区域，则直接退出。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (GC_locker::check_active_before_gc()) &#123;</span><br><span class="line">   <span class="keyword">return</span>; <span class="comment">// GC is disabled (e.g. JNI Get<span class="doctag"><span class="keyword">XXX</span></span>Critical operation)</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>执行gc_prologue。</p>
+<ol>
+<li>处理TLAB，见 <a href="http://jangzq.info/2015/06/28/tlab/">HotSpot的TLAB实现解析</a>。</li>
+<li>调用各个Generation的gc_prologue。</li>
+</ol>
+</li>
+<li><p>如果是full gc，则需要找到开始回收的，最老的generation，这通过调用Generation的full_collects_younger_generations方法得到，当对此generation进行回收时，同时会回收更新的generation时，返回true。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (full) &#123;</span><br><span class="line">   <span class="comment">// Search for the oldest generation which will collect all younger</span></span><br><span class="line">   <span class="comment">// generations, and start collection loop there.</span></span><br><span class="line">   <span class="keyword">for</span> (<span class="keyword">int</span> i = max_level; i &gt;= <span class="number">0</span>; i--) &#123;</span><br><span class="line">     <span class="keyword">if</span> (_gens[i]-&gt;full_collects_younger_generations()) &#123;</span><br><span class="line">       starting_level = i;</span><br><span class="line">       <span class="keyword">break</span>;</span><br><span class="line">     &#125;</span><br><span class="line">   &#125;</span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>从上一步得到的starting_level到最老的generation,依照从young到old的次序进行垃圾回收。<br> 对于每一个generation。</p>
+<ol>
+<li>首先，使用<code>_gens[i]-&gt;should_collect(full, size, is_tlab)</code>方法判断是否需要在此generation上进行collect。<br> 见附录。</li>
+<li>调用generation的collect方法，进行回收，见后续文章。</li>
+<li>检查是否满足分配。<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (size &gt; <span class="number">0</span>) &#123;</span><br><span class="line">  <span class="keyword">if</span> (!<span class="keyword">is_t</span>lab || _gens[i]-&gt;<span class="keyword">supports_t</span>lab_allocation()) &#123;</span><br><span class="line">    <span class="keyword">if</span> (size*HeapWordSize &lt;= _gens[i]-&gt;unsafe_max_alloc_nogc()) &#123;</span><br><span class="line">      size = <span class="number">0</span>;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+<li><p>重新计算每个generation的大小,如果是full gc，则重新计算Perm的大小。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> j = max_level_collected; j &gt;= <span class="number">0</span>; j -= <span class="number">1</span>) &#123;</span><br><span class="line">  <span class="comment">// Adjust generation sizes.</span></span><br><span class="line">  _gens[j]-&gt;compute_new_size();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> (complete) &#123;</span><br><span class="line">  <span class="comment">// Ask the permanent generation to adjust size for full collections</span></span><br><span class="line">  perm()-&gt;compute_new_size();</span><br><span class="line">  update_full_collections_completed();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>调用 gc_epilogue</p>
+<ol>
+<li>重新调整TLAB大小，见<a href="http://jangzq.info/2015/06/28/tlab/">HotSpot的TLAB实现解析</a>。</li>
+<li>调用每个generation上的 gc_epilogue。<br>见后续文章。</li>
+</ol>
+</li>
+</ol>
+<h2 id="附录">附录</h2><h3 id="should_collect">should_collect</h3><p>介绍每个generation的should_collect的实现方式。</p>
+<h4 id="DefNewGeneration及其子类">DefNewGeneration及其子类</h4><p>如果是full，则返回true，否则判断需要分配的内存是否可以在此generation分配，如果不可以，就不需要回收此generation。<br> <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">return</span> (full || should_allocate(word_size, <span class="keyword">is_t</span>lab));</span><br></pre></td></tr></table></figure></p>
+<h4 id="TenuredGeneration">TenuredGeneration</h4><p>full gc， 或者需要分配的内存是否可以在此generation分配， 或者剩余空间少于10k，或者gc开始时的capacity，小于目前的capacity，即说明为了容纳young generation上移的内存，造成了本generationde 扩展。</p>
+<h4 id="ConcurrentMarkSweepGeneration">ConcurrentMarkSweepGeneration</h4><p>如果是full，则返回true，否则判断需要分配的内存是否可以在此generation分配，如果不可以，就不需要回收此generation。</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<h2 id="VM_GenCollectForAllocation">VM_GenCollectF]]>
+    </summary>
+    
+      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
+    
+  </entry>
   
   <entry>
     <title><![CDATA[分代内存管理之内存初始化]]></title>

@@ -77,6 +77,116 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
+      <a href="/2015/07/31/DefNewGeneration_collect/" title="DefNewGeneration垃圾收集" itemprop="url">DefNewGeneration垃圾收集</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-31T14:12:10.000Z" itemprop="datePublished"> 发表于 2015-07-31</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。</p>
+<ul>
+<li><p>首先判断在DefNewGeneration进行垃圾回收是否能成功，如果不能成功就直接跳过此Generation，否则白做无用工。判断的逻辑在DefNewGeneration::collection_attempt_is_safe，如果可以进行回收，返回true.</p>
+<ol>
+<li><p>首先判断to区域是否是空的，如果不空，说明上次回收都没有搞彻底，所以返回false。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!to()-&gt;is_empty()) &#123;</span><br><span class="line">  <span class="keyword">if</span> (Verbose &amp;&amp; PrintGCDetails) &#123;</span><br><span class="line">    <span class="keyword">gclog_or_t</span>ty-&gt;print(<span class="string">" :: to is not empty :: "</span>);</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">return</span> <span class="keyword">false</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>通过调用next generation的promotion_attempt_is_safe方法，得到next generation是否能容纳目前本generation已经使用的内存，如果能容纳，返回true，否则false。（一般在并不是只判断能不容纳当前的最大内存，而是也使用历史经验值判断）。</p>
+</li>
+</ol>
+<p>此时在返回前，设置_incremental_collection_failed为true，即incremental collection将会失败。</p>
+</li>
+<li><p>遍历所有的root reference，处理现在存活的root对象，使用FastScanClosure处理每一个遍历到的oop， FastScanClosure的处理方法见附录。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">gch-&gt;gen_process_strong_roots(_level,</span><br><span class="line">                                <span class="keyword">true</span>,  <span class="comment">// Process younger gens, if any,</span></span><br><span class="line">                                       <span class="comment">// as strong roots.</span></span><br><span class="line">                                <span class="keyword">true</span>,  <span class="comment">// activate StrongRootsScope</span></span><br><span class="line">                                <span class="keyword">false</span>, <span class="comment">// not collecting perm generation.</span></span><br><span class="line">                                SharedHeap::SO_AllClasses,</span><br><span class="line">                                &amp;fsc_with_no_gc_barrier,</span><br><span class="line">                                <span class="keyword">true</span>,   <span class="comment">// walk *all* scavengable nmethods</span></span><br><span class="line">                                &amp;fsc_with_gc_barrier);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>遍历上一步得到root对象，遍历它们引用的对象，使用FastScanClosure处理每一个oop，直到遍历完。这是由<code>fastEvacuateFollowersClosure::do_void</code>实现的。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">do</span> &#123;</span><br><span class="line">  _gch-&gt;oop_since_save_marks_iterate(_level, _scan_cur_or_nonheap,</span><br><span class="line">                                     _scan_older);</span><br><span class="line">&#125; <span class="keyword">while</span> (!_gch-&gt;no_allocs_since_save_marks(_level));</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>在之前的遍历里，记录了所有java.lang.Reference相关对象，下面处理这些对象，处理方法和前面的类似。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">FastKeepAliveClosure <span class="title">keep_alive</span><span class="params">(<span class="keyword">this</span>, &amp;scan_weak_ref)</span></span>;</span><br><span class="line">ReferenceProcessor* rp = ref_processor();</span><br><span class="line">rp-&gt;setup_policy(clear_all_soft_refs);</span><br><span class="line"><span class="keyword">const</span> ReferenceProcessorStats&amp; stats =</span><br><span class="line">  rp-&gt;process_discovered_references(&amp;is_alive, &amp;keep_alive, &amp;evacuate_followers,</span><br><span class="line">                                    NULL, <span class="keyword">_gc_t</span>imer);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果没有发生promote错误，则</p>
+<ol>
+<li>交换from 和 to。</li>
+<li>重新计算_tenuring_threshold，见附录。<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">swap_spaces();</span><br><span class="line"></span><br><span class="line">assert(to()-&gt;is_empty(), <span class="string">"to space should be empty now"</span>);</span><br><span class="line"></span><br><span class="line"><span class="comment">// Set the desired survivor size to half the real survivor space</span></span><br><span class="line"><span class="keyword">_tenuring_t</span>hreshold =</span><br><span class="line">  <span class="keyword">age_t</span>able()-&gt;<span class="keyword">compute_tenuring_t</span>hreshold(to()-&gt;capacity()/HeapWordSize);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+<li><p>如果发生了promote错误，则</p>
+<ol>
+<li><p>如果一个对象已经挪到了新位置，并且所有引用它的指针已经指向了新位置，所以老的位置的对象就可以清除了，在成功的进行了gc时，整个from（原来的from）都可以不要，所以没必要单独处理每一个对象，但是现在由于eden、from 、to区域里都有活动的对象，以后进行full gc时，需要查看此区域，所以需要将eden和from区域里的对象里的forward oop全部清除。</p>
+  <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">remove_forwarding_pointers();</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>交换from 和 to。</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">swap_spaces();   <span class="comment">// For uniformity wrt ParNewGeneration.</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>eden、from 、to区域里都有活动的对象，所以需要将to区域也加入到以后full gc需要compact的区域队列里。</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">from()-&gt;set_next_compaction_space(to());</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>设置incremental collection失败了的标志，</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">gch-&gt;set_incremental_collection_failed();</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>通知next generation，发生了promote failure.</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">_next_gen-&gt;promotion_failure_occurred();</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+</ul>
+<h2 id="附录">附录</h2><h3 id="FastScanClosure">FastScanClosure</h3><p>如果对象在此generation里，进行下列处理，否则返回。<br>已经forward过了，则返回新地址，否则调用copy_to_survivor_space，拷贝到to或者promote到下一generation,并且返回新地址。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">oop new_obj = obj-&gt;is_forwarded() ? obj-&gt;forwardee()</span><br><span class="line">                                    : _g-&gt;<span class="keyword">copy_t</span>o_survivor_space(obj);</span><br><span class="line">oopDesc::encode_store_heap_oop_not_null(p, new_obj);</span><br></pre></td></tr></table></figure></p>
+<h3 id="DefNewGeneration::copy_to_survivor_space">DefNewGeneration::copy_to_survivor_space</h3><ol>
+<li>如果oop的age小于阈值_tenuring_threshold，在to区域分配内存，如果分配成功，将对象拷贝到to区域，并且增加object的age。</li>
+<li>如果在to上分配没有成功，或者age大于阈值，提升到下一个generation，如果promote失败，则留在原地。</li>
+<li>如果移动成功了，则在原来的对象头上，记录forward到的新指针，并且增加age值。</li>
+</ol>
+<h3 id="重新计算_tenuring_threshold">重新计算_tenuring_threshold</h3><p>在每次gc之后，根据young generation里现存对象大小，计算出新的_tenuring_threshold，目标是使目前的对象大小，小于<code>to的大小 * TargetSurvivorRatio</code>。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">while</span> (age &lt; table_size) &#123;</span><br><span class="line">  total += sizes[age];</span><br><span class="line">  <span class="comment">// check if including objects of age 'age' made us pass the desired</span></span><br><span class="line">  <span class="comment">// size, if so 'age' is the new threshold</span></span><br><span class="line">  <span class="keyword">if</span> (total &gt; desired_survivor_size) <span class="keyword">break</span>;</span><br><span class="line">  age++;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+
+        
+        
+        <p class="article-more-link">
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
       <a href="/2015/07/29/GenCollectedHeap_collect/" title="分代内存管理之垃圾收集" itemprop="url">分代内存管理之垃圾收集</a>
   </h1>
   <p class="article-author">By
@@ -688,7 +798,7 @@
 		<ul class="clearfix">
 		
 			
-				<li><a href="/tags/jvm/" title="jvm">jvm<sup>8</sup></a></li>
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>9</sup></a></li>
 			
 		
 			

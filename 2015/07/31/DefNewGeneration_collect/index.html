@@ -1,0 +1,468 @@
+
+ <!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  
+    <title>DefNewGeneration垃圾收集 | Jangzq技术研究</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="Zhang Zq">
+    
+
+    
+    <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。
+
+首先判断在DefNewGeneration进行垃圾回收是否能成功，如果不能成功就直接跳过此Generation，否则白做无用工。判断的逻辑在DefNewGeneration::collection_attempt_is_saf">
+<meta property="og:type" content="article">
+<meta property="og:title" content="DefNewGeneration垃圾收集">
+<meta property="og:url" content="http://jangzq.info/2015/07/31/DefNewGeneration_collect/index.html">
+<meta property="og:site_name" content="Jangzq技术研究">
+<meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。
+
+首先判断在DefNewGeneration进行垃圾回收是否能成功，如果不能成功就直接跳过此Generation，否则白做无用工。判断的逻辑在DefNewGeneration::collection_attempt_is_saf">
+<meta property="og:updated_time" content="2015-07-31T14:28:11.000Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="DefNewGeneration垃圾收集">
+<meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。
+
+首先判断在DefNewGeneration进行垃圾回收是否能成功，如果不能成功就直接跳过此Generation，否则白做无用工。判断的逻辑在DefNewGeneration::collection_attempt_is_saf">
+
+    
+    <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+</head>
+
+  <body>
+    <header>
+      
+<div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="Jangzq技术研究">Jangzq技术研究</a></h1>
+				<h2 class="blog-motto">关注代码的秘密， 记录探索点滴， 分享技术收获</h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="菜单">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">主页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于我</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="搜索" />
+						<input type="hidden" name="q" value="site:jangzq.info">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+  
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/07/31/DefNewGeneration_collect/" title="DefNewGeneration垃圾收集" itemprop="url">DefNewGeneration垃圾收集</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-31T14:12:10.000Z" itemprop="datePublished"> 发表于 2015-07-31</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">文章目录</strong>
+		
+			<ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#附录"><span class="toc-number">1.</span> <span class="toc-text">附录</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#FastScanClosure"><span class="toc-number">1.1.</span> <span class="toc-text">FastScanClosure</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#DefNewGeneration::copy_to_survivor_space"><span class="toc-number">1.2.</span> <span class="toc-text">DefNewGeneration::copy_to_survivor_space</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#重新计算_tenuring_threshold"><span class="toc-number">1.3.</span> <span class="toc-text">重新计算_tenuring_threshold</span></a></li></ol></li></ol>
+		
+		</div>
+		
+		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。</p>
+<ul>
+<li><p>首先判断在DefNewGeneration进行垃圾回收是否能成功，如果不能成功就直接跳过此Generation，否则白做无用工。判断的逻辑在DefNewGeneration::collection_attempt_is_safe，如果可以进行回收，返回true.</p>
+<ol>
+<li><p>首先判断to区域是否是空的，如果不空，说明上次回收都没有搞彻底，所以返回false。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!to()-&gt;is_empty()) &#123;</span><br><span class="line">  <span class="keyword">if</span> (Verbose &amp;&amp; PrintGCDetails) &#123;</span><br><span class="line">    <span class="keyword">gclog_or_t</span>ty-&gt;print(<span class="string">" :: to is not empty :: "</span>);</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">return</span> <span class="keyword">false</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>通过调用next generation的promotion_attempt_is_safe方法，得到next generation是否能容纳目前本generation已经使用的内存，如果能容纳，返回true，否则false。（一般在并不是只判断能不容纳当前的最大内存，而是也使用历史经验值判断）。</p>
+</li>
+</ol>
+<p>此时在返回前，设置_incremental_collection_failed为true，即incremental collection将会失败。</p>
+</li>
+<li><p>遍历所有的root reference，处理现在存活的root对象，使用FastScanClosure处理每一个遍历到的oop， FastScanClosure的处理方法见附录。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">gch-&gt;gen_process_strong_roots(_level,</span><br><span class="line">                                <span class="keyword">true</span>,  <span class="comment">// Process younger gens, if any,</span></span><br><span class="line">                                       <span class="comment">// as strong roots.</span></span><br><span class="line">                                <span class="keyword">true</span>,  <span class="comment">// activate StrongRootsScope</span></span><br><span class="line">                                <span class="keyword">false</span>, <span class="comment">// not collecting perm generation.</span></span><br><span class="line">                                SharedHeap::SO_AllClasses,</span><br><span class="line">                                &amp;fsc_with_no_gc_barrier,</span><br><span class="line">                                <span class="keyword">true</span>,   <span class="comment">// walk *all* scavengable nmethods</span></span><br><span class="line">                                &amp;fsc_with_gc_barrier);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>遍历上一步得到root对象，遍历它们引用的对象，使用FastScanClosure处理每一个oop，直到遍历完。这是由<code>fastEvacuateFollowersClosure::do_void</code>实现的。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">do</span> &#123;</span><br><span class="line">  _gch-&gt;oop_since_save_marks_iterate(_level, _scan_cur_or_nonheap,</span><br><span class="line">                                     _scan_older);</span><br><span class="line">&#125; <span class="keyword">while</span> (!_gch-&gt;no_allocs_since_save_marks(_level));</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>在之前的遍历里，记录了所有java.lang.Reference相关对象，下面处理这些对象，处理方法和前面的类似。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">FastKeepAliveClosure <span class="title">keep_alive</span><span class="params">(<span class="keyword">this</span>, &amp;scan_weak_ref)</span></span>;</span><br><span class="line">ReferenceProcessor* rp = ref_processor();</span><br><span class="line">rp-&gt;setup_policy(clear_all_soft_refs);</span><br><span class="line"><span class="keyword">const</span> ReferenceProcessorStats&amp; stats =</span><br><span class="line">  rp-&gt;process_discovered_references(&amp;is_alive, &amp;keep_alive, &amp;evacuate_followers,</span><br><span class="line">                                    NULL, <span class="keyword">_gc_t</span>imer);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果没有发生promote错误，则</p>
+<ol>
+<li>交换from 和 to。</li>
+<li>重新计算_tenuring_threshold，见附录。<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">swap_spaces();</span><br><span class="line"></span><br><span class="line">assert(to()-&gt;is_empty(), <span class="string">"to space should be empty now"</span>);</span><br><span class="line"></span><br><span class="line"><span class="comment">// Set the desired survivor size to half the real survivor space</span></span><br><span class="line"><span class="keyword">_tenuring_t</span>hreshold =</span><br><span class="line">  <span class="keyword">age_t</span>able()-&gt;<span class="keyword">compute_tenuring_t</span>hreshold(to()-&gt;capacity()/HeapWordSize);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+<li><p>如果发生了promote错误，则</p>
+<ol>
+<li><p>如果一个对象已经挪到了新位置，并且所有引用它的指针已经指向了新位置，所以老的位置的对象就可以清除了，在成功的进行了gc时，整个from（原来的from）都可以不要，所以没必要单独处理每一个对象，但是现在由于eden、from 、to区域里都有活动的对象，以后进行full gc时，需要查看此区域，所以需要将eden和from区域里的对象里的forward oop全部清除。</p>
+  <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">remove_forwarding_pointers();</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>交换from 和 to。</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">swap_spaces();   <span class="comment">// For uniformity wrt ParNewGeneration.</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>eden、from 、to区域里都有活动的对象，所以需要将to区域也加入到以后full gc需要compact的区域队列里。</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">from()-&gt;set_next_compaction_space(to());</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>设置incremental collection失败了的标志，</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">gch-&gt;set_incremental_collection_failed();</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>通知next generation，发生了promote failure.</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">_next_gen-&gt;promotion_failure_occurred();</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+</ul>
+<h2 id="附录">附录</h2><h3 id="FastScanClosure">FastScanClosure</h3><p>如果对象在此generation里，进行下列处理，否则返回。<br>已经forward过了，则返回新地址，否则调用copy_to_survivor_space，拷贝到to或者promote到下一generation,并且返回新地址。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">oop new_obj = obj-&gt;is_forwarded() ? obj-&gt;forwardee()</span><br><span class="line">                                    : _g-&gt;<span class="keyword">copy_t</span>o_survivor_space(obj);</span><br><span class="line">oopDesc::encode_store_heap_oop_not_null(p, new_obj);</span><br></pre></td></tr></table></figure></p>
+<h3 id="DefNewGeneration::copy_to_survivor_space">DefNewGeneration::copy_to_survivor_space</h3><ol>
+<li>如果oop的age小于阈值_tenuring_threshold，在to区域分配内存，如果分配成功，将对象拷贝到to区域，并且增加object的age。</li>
+<li>如果在to上分配没有成功，或者age大于阈值，提升到下一个generation，如果promote失败，则留在原地。</li>
+<li>如果移动成功了，则在原来的对象头上，记录forward到的新指针，并且增加age值。</li>
+</ol>
+<h3 id="重新计算_tenuring_threshold">重新计算_tenuring_threshold</h3><p>在每次gc之后，根据young generation里现存对象大小，计算出新的_tenuring_threshold，目标是使目前的对象大小，小于<code>to的大小 * TargetSurvivorRatio</code>。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">while</span> (age &lt; table_size) &#123;</span><br><span class="line">  total += sizes[age];</span><br><span class="line">  <span class="comment">// check if including objects of age 'age' made us pass the desired</span></span><br><span class="line">  <span class="comment">// size, if so 'age' is the new threshold</span></span><br><span class="line">  <span class="keyword">if</span> (total &gt; desired_survivor_size) <span class="keyword">break</span>;</span><br><span class="line">  age++;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+	<div class="article-share" id="share">
+	
+	  <div data-url="http://jangzq.info/2015/07/31/DefNewGeneration_collect/" data-title="DefNewGeneration垃圾收集 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  </div>
+	
+	</div>
+
+
+</footer>
+
+   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+
+<div class="next">
+<a href="/2015/07/29/GenCollectedHeap_collect/"  title="分代内存管理之垃圾收集">
+ <strong>下一篇：</strong><br/> 
+ <span>分代内存管理之垃圾收集
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="显示侧边栏"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">文章目录</strong>
+ 
+ <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#附录"><span class="toc-number">1.</span> <span class="toc-text">附录</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#FastScanClosure"><span class="toc-number">1.1.</span> <span class="toc-text">FastScanClosure</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#DefNewGeneration::copy_to_survivor_space"><span class="toc-number">1.2.</span> <span class="toc-text">DefNewGeneration::copy_to_survivor_space</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#重新计算_tenuring_threshold"><span class="toc-number">1.3.</span> <span class="toc-text">重新计算_tenuring_threshold</span></a></li></ol></li></ol>
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="隐藏侧边栏"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+<div class="tagslist">
+	<p class="asidetitle">标签</p>
+		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>9</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>1</sup></a></li>
+			
+		
+		</ul>
+</div>
+
+
+  <div class="linkslist">
+  <p class="asidetitle">友情链接</p>
+    <ul>
+        
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS 订阅</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	
+	<section class="info">
+		<p> Jangzq&#39;s blog <br/>
+			Focus on the secret of code!</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		<a href="http://weibo.com/Jangzq" target="_blank" class="icon-weibo" title="微博"></a>
+		
+		
+		<a href="https://github.com/Jangzq" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:zqzhangmail@163.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+			
+		
+
+		<p class="copyright">
+		Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Jacman">Jacman</a> © 2015 
+		
+		<a href="/about" target="_blank" title="Zhang Zq">Zhang Zq</a>
+		
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script src="/js/jquery.imagesloaded.min.js"></script>
+<script src="/js/gallery.js"></script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+  
+        getSize();
+        if (myWidth >= 1024) {
+          c.click();
+        }
+  
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else{
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  c.click(function(){
+    ta.css('display', 'block').addClass('fadeIn');
+  });
+  o.click(function(){
+    ta.css('display', 'none');
+  });
+  $(window).scroll(function(){
+    ta.css("top",Math.max(140,320-$(this).scrollTop()));
+  });
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#nothing"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="微信"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="微博"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+<!-- Analytics Begin -->
+
+
+
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3F435d1985a249fde8415798105b4f848b' type='text/javascript'%3E%3C/script%3E"));
+</script>
+
+
+
+<!-- Analytics End -->
+
+<!-- Totop Begin -->
+
+	<div id="totop">
+	<a title="返回顶部"><img src="/img/scrollup.png"/></a>
+	</div>
+	<script src="/js/totop.js"></script>
+
+<!-- Totop End -->
+
+<!-- MathJax Begin -->
+<!-- mathjax config similar to math.stackexchange -->
+
+
+<!-- MathJax End -->
+
+<!-- Tiny_search Begin -->
+
+<!-- Tiny_search End -->
+
+  </body>
+</html>

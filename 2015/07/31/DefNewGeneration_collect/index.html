@@ -12,24 +12,18 @@
 
     
     <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
-DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。
-
-首先判断在DefNewGeneration进行垃圾回收是否能成功，如果不能成功就直接跳过此Generation，否则白做无用工。判断的逻辑在DefNewGeneration::collection_attempt_is_saf">
+正文DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。">
 <meta property="og:type" content="article">
 <meta property="og:title" content="DefNewGeneration垃圾收集">
 <meta property="og:url" content="http://jangzq.info/2015/07/31/DefNewGeneration_collect/index.html">
 <meta property="og:site_name" content="Jangzq技术研究">
 <meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
-DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。
-
-首先判断在DefNewGeneration进行垃圾回收是否能成功，如果不能成功就直接跳过此Generation，否则白做无用工。判断的逻辑在DefNewGeneration::collection_attempt_is_saf">
-<meta property="og:updated_time" content="2015-07-31T14:28:11.000Z">
+正文DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。">
+<meta property="og:updated_time" content="2015-08-01T09:09:48.000Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="DefNewGeneration垃圾收集">
 <meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
-DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。
-
-首先判断在DefNewGeneration进行垃圾回收是否能成功，如果不能成功就直接跳过此Generation，否则白做无用工。判断的逻辑在DefNewGeneration::collection_attempt_is_saf">
+正文DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。">
 
     
     <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
@@ -101,12 +95,12 @@ DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。
 		<div id="toc" class="toc-article">
 			<strong class="toc-title">文章目录</strong>
 		
-			<ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#附录"><span class="toc-number">1.</span> <span class="toc-text">附录</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#FastScanClosure"><span class="toc-number">1.1.</span> <span class="toc-text">FastScanClosure</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#DefNewGeneration::copy_to_survivor_space"><span class="toc-number">1.2.</span> <span class="toc-text">DefNewGeneration::copy_to_survivor_space</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#重新计算_tenuring_threshold"><span class="toc-number">1.3.</span> <span class="toc-text">重新计算_tenuring_threshold</span></a></li></ol></li></ol>
+			<ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#正文"><span class="toc-number">1.</span> <span class="toc-text">正文</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#附录"><span class="toc-number">2.</span> <span class="toc-text">附录</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#FastScanClosure"><span class="toc-number">2.1.</span> <span class="toc-text">FastScanClosure</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#DefNewGeneration::copy_to_survivor_space"><span class="toc-number">2.2.</span> <span class="toc-text">DefNewGeneration::copy_to_survivor_space</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#重新计算_tenuring_threshold"><span class="toc-number">2.3.</span> <span class="toc-text">重新计算_tenuring_threshold</span></a></li></ol></li></ol>
 		
 		</div>
 		
 		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。</p>
+<h2 id="正文">正文</h2><p>DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。<br><a id="more"></a></p>
 <ul>
 <li><p>首先判断在DefNewGeneration进行垃圾回收是否能成功，如果不能成功就直接跳过此Generation，否则白做无用工。判断的逻辑在DefNewGeneration::collection_attempt_is_safe，如果可以进行回收，返回true.</p>
 <ol>
@@ -191,6 +185,14 @@ DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。
 	
 <nav class="article-nav clearfix">
  
+ <div class="prev" >
+ <a href="/2015/07/31/ParNewGeneration_collect/" title="ParNewGeneration垃圾收集">
+  <strong>上一篇：</strong><br/>
+  <span>
+  ParNewGeneration垃圾收集</span>
+</a>
+</div>
+
 
 <div class="next">
 <a href="/2015/07/29/GenCollectedHeap_collect/"  title="分代内存管理之垃圾收集">
@@ -210,7 +212,7 @@ DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。
   <div id="toc" class="toc-aside">
   <strong class="toc-title">文章目录</strong>
  
- <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#附录"><span class="toc-number">1.</span> <span class="toc-text">附录</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#FastScanClosure"><span class="toc-number">1.1.</span> <span class="toc-text">FastScanClosure</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#DefNewGeneration::copy_to_survivor_space"><span class="toc-number">1.2.</span> <span class="toc-text">DefNewGeneration::copy_to_survivor_space</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#重新计算_tenuring_threshold"><span class="toc-number">1.3.</span> <span class="toc-text">重新计算_tenuring_threshold</span></a></li></ol></li></ol>
+ <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#正文"><span class="toc-number">1.</span> <span class="toc-text">正文</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#附录"><span class="toc-number">2.</span> <span class="toc-text">附录</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#FastScanClosure"><span class="toc-number">2.1.</span> <span class="toc-text">FastScanClosure</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#DefNewGeneration::copy_to_survivor_space"><span class="toc-number">2.2.</span> <span class="toc-text">DefNewGeneration::copy_to_survivor_space</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#重新计算_tenuring_threshold"><span class="toc-number">2.3.</span> <span class="toc-text">重新计算_tenuring_threshold</span></a></li></ol></li></ol>
  
   </div>
 
@@ -226,7 +228,7 @@ DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。
 		<ul class="clearfix">
 		
 			
-				<li><a href="/tags/jvm/" title="jvm">jvm<sup>9</sup></a></li>
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>10</sup></a></li>
 			
 		
 			

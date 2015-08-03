@@ -1,0 +1,478 @@
+
+ <!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  
+    <title>TenuredGeneration垃圾收集 | Jangzq技术研究</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="Zhang Zq">
+    
+
+    
+    <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+当使用TenuredGeneration作为Old generation时，垃圾收集方法的入口为： TenuredGeneration::collect，只有在full gc时调用，其核心的程序在GenMarkSweep::invoke_at_safepoint中，其主要操作分为4步：
+
+标记live的对象，对应mark_sweep_">
+<meta property="og:type" content="article">
+<meta property="og:title" content="TenuredGeneration垃圾收集">
+<meta property="og:url" content="http://jangzq.info/2015/08/02/tenure_collect/index.html">
+<meta property="og:site_name" content="Jangzq技术研究">
+<meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+当使用TenuredGeneration作为Old generation时，垃圾收集方法的入口为： TenuredGeneration::collect，只有在full gc时调用，其核心的程序在GenMarkSweep::invoke_at_safepoint中，其主要操作分为4步：
+
+标记live的对象，对应mark_sweep_">
+<meta property="og:updated_time" content="2015-08-03T12:01:09.000Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="TenuredGeneration垃圾收集">
+<meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+当使用TenuredGeneration作为Old generation时，垃圾收集方法的入口为： TenuredGeneration::collect，只有在full gc时调用，其核心的程序在GenMarkSweep::invoke_at_safepoint中，其主要操作分为4步：
+
+标记live的对象，对应mark_sweep_">
+
+    
+    <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+</head>
+
+  <body>
+    <header>
+      
+<div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="Jangzq技术研究">Jangzq技术研究</a></h1>
+				<h2 class="blog-motto">关注代码的秘密， 记录探索点滴， 分享技术收获</h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="菜单">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">主页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于我</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="搜索" />
+						<input type="hidden" name="q" value="site:jangzq.info">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+  
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/08/02/tenure_collect/" title="TenuredGeneration垃圾收集" itemprop="url">TenuredGeneration垃圾收集</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-08-02T11:57:26.000Z" itemprop="datePublished"> 发表于 2015-08-02</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">文章目录</strong>
+		
+			<ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#标记live对象"><span class="toc-number">1.</span> <span class="toc-text">标记live对象</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#计算对象新的地址"><span class="toc-number">2.</span> <span class="toc-text">计算对象新的地址</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#更新引用地址"><span class="toc-number">3.</span> <span class="toc-text">更新引用地址</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#将对象移动到新的地址"><span class="toc-number">4.</span> <span class="toc-text">将对象移动到新的地址</span></a></li></ol>
+		
+		</div>
+		
+		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>当使用TenuredGeneration作为Old generation时，垃圾收集方法的入口为： <code>TenuredGeneration::collect</code>，只有在full gc时调用，其核心的程序在<code>GenMarkSweep::invoke_at_safepoint</code>中，其主要操作分为4步：</p>
+<ol>
+<li>标记live的对象，对应<code>mark_sweep_phase1</code>方法。</li>
+<li>计算对象新的地址， 对应<code>mark_sweep_phase2</code>方法。</li>
+<li>更新引用地址，对应<code>mark_sweep_phase3</code>方法。</li>
+<li>将对象移动到新的地址，对应<code>mark_sweep_phase4</code>方法。<br>可以看出，这是一个mark-compact算法，经过以上操作后，不存在内存碎片。</li>
+</ol>
+<h2 id="标记live对象">标记live对象</h2><a id="more"></a>
+<ol>
+<li><p>在<code>mark_sweep_phase1</code>方法中，在这里使用MarkSweep::FollowRootClosure处理遍历到的对象，最终调用的函数为：MarkSweep::follow_root。</p>
+<ol>
+<li><p>标记root对象。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!obj-&gt;mark()-&gt;is_marked()) &#123;</span><br><span class="line">  mark_object(obj);</span><br><span class="line">  obj-&gt;follow_contents();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>标记这个对象的方法为：mark_object：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">inline</span> <span class="keyword">void</span> MarkSweep::mark_object(oop obj) &#123;</span><br><span class="line">  <span class="comment">// some marks may contain information we need to preserve so we store them away</span></span><br><span class="line">  <span class="comment">// and overwrite the mark.  We'll restore it at the end of markSweep.</span></span><br><span class="line">  markOop mark = obj-&gt;mark();</span><br><span class="line">  obj-&gt;set_mark(markOopDesc::prototype()-&gt;set_marked());</span><br><span class="line"></span><br><span class="line">  <span class="keyword">if</span> (mark-&gt;must_be_preserved(obj)) &#123;</span><br><span class="line">    preserve_mark(obj, mark);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p><code>obj-&gt;follow_contents()</code>将此对象引用的对象放入stack，通过此stack进行广度优先遍历。</p>
+</li>
+<li>循环遍历被引用的对象，方法为<code>follow_stack()</code>。<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">void</span> MarkSweep::follow_stack() &#123;</span><br><span class="line">  <span class="keyword">do</span> &#123;</span><br><span class="line">    <span class="keyword">while</span> (!_marking_stack.is_empty()) &#123;</span><br><span class="line">      oop obj = _marking_stack.pop();</span><br><span class="line">      assert (obj-&gt;is_gc_marked(), <span class="string">"p must be marked"</span>);</span><br><span class="line">      obj-&gt;follow_contents();</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="comment">// Process ObjArrays one at a time to avoid marking stack bloat.</span></span><br><span class="line">    <span class="keyword">if</span> (!_objarray_stack.is_empty()) &#123;</span><br><span class="line">      ObjArrayTask task = _objarray_stack.pop();</span><br><span class="line">      objArrayKlass* <span class="keyword">const</span> k = (objArrayKlass*)task.obj()-&gt;blueprint();</span><br><span class="line">      k-&gt;oop_follow_contents(task.obj(), task.index());</span><br><span class="line">    &#125;</span><br><span class="line">  &#125; <span class="keyword">while</span> (!_marking_stack.is_empty() || !_objarray_stack.is_empty());</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+<li><p>处理java.lang.Reference相关对象。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">&#123;</span><br><span class="line">   ref_processor()-&gt;setup_policy(clear_all_softrefs);</span><br><span class="line">   <span class="keyword">const</span> ReferenceProcessorStats&amp; stats =</span><br><span class="line">     ref_processor()-&gt;process_discovered_references(</span><br><span class="line">       &amp;is_alive, &amp;keep_alive, &amp;follow_stack_closure, NULL, <span class="keyword">_gc_t</span>imer);</span><br><span class="line">   <span class="keyword">gc_t</span>racer()-&gt;report_gc_reference_stats(stats);</span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h2 id="计算对象新的地址">计算对象新的地址</h2><p>调用GenCollectedHeap::prepare_for_compaction，其中从old—&gt;young，依次调用generation上的prepare_for_compaction。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">Generation* scanning_gen = _gens[_n_gens-<span class="number">1</span>];</span><br><span class="line"><span class="comment">// Start by compacting into same gen.</span></span><br><span class="line"><span class="function">CompactPoint <span class="title">cp</span><span class="params">(scanning_gen, NULL, NULL)</span></span>;</span><br><span class="line"><span class="keyword">while</span> (scanning_gen != NULL) &#123;</span><br><span class="line">  scanning_gen-&gt;prepare_for_compaction(&amp;cp);</span><br><span class="line">  scanning_gen = prev_gen(scanning_gen);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>generation中的prepare_for_compaction，调用各个区域的prepare_for_compaction，比如DefNewGeneration中的eden、from、to。在DefNewGeneration的垃圾收集文章里，介绍了这个链表是如何构成的。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// Generic implementation, can be specialized</span></span><br><span class="line">CompactibleSpace* space = first_compaction_space();</span><br><span class="line"><span class="keyword">while</span> (space != NULL) &#123;</span><br><span class="line">  space-&gt;prepare_for_compaction(cp);</span><br><span class="line">  space = space-&gt;next_compaction_space();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>ContiguousSpace::prepare_for_compaction如下：</p>
+<ol>
+<li><p>mark-compact的本意是将所有存活的对象全部挪到空间的一端，消除碎片，但是如果一开始只存在少量的碎片，挪动所有对象带来的开销很大，但是收到的效果不大，所以引入了几个参数控制是否进行挪动。<br>MarkSweepAlwaysCompactCount: 每执行MarkSweepAlwaysCompactCount次，不计代价的执行一次全挪动的操作。<br>MarkSweepDeadRatio：考虑挪动代价的时候，允许多大的空间可以作为碎片存在。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">bool</span> skip_dead = (MarkSweepAlwaysCompactCount &lt; <span class="number">1</span>)                         \</span><br><span class="line">  ||((invocations % MarkSweepAlwaysCompactCount) != <span class="number">0</span>);    </span><br><span class="line"><span class="keyword">size_t</span> allowed_deadspace = <span class="number">0</span>;                                              \</span><br><span class="line"><span class="keyword">if</span> (skip_dead) &#123;                                                           \</span><br><span class="line">  <span class="keyword">const</span> <span class="keyword">size_t</span> ratio = allowed_dead_ratio();                               \</span><br><span class="line">  allowed_deadspace = (capacity() * ratio / <span class="number">100</span>) / HeapWordSize;           \</span><br><span class="line">&#125;                                                                          \</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>遍历整个空间。compact_top指向下一个alive对象可以挪到的位置，q为当前遍历指针，以下操作循环执行。</p>
+<ol>
+<li><p>当q所指向的对象是alive对象时，将此对象的forwarding指针置为当前compact_top，并且修改compact_top为compact_top+对象大小。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (block_is_obj(q) &amp;&amp; oop(q)-&gt;is_gc_marked()) &#123;                         \</span><br><span class="line">  <span class="comment">/* prefetch beyond q */</span>                                                \</span><br><span class="line">  Prefetch::write(q, interval);                                          \</span><br><span class="line">  <span class="comment">/* size_t size = oop(q)-&gt;size();  changing this for cms for perm gen */</span>\</span><br><span class="line">  <span class="keyword">size_t</span> size = block_size(q);                                           \</span><br><span class="line">  <span class="keyword">compact_t</span>op = cp-&gt;space-&gt;forward(oop(q), size, cp, <span class="keyword">compact_t</span>op);       \</span><br><span class="line">  q += size;                                                             \</span><br><span class="line">  end_of_live = q;                                                       \</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>当q指向的对象不alive时，首先找到下一个alive的对象,end指向下一个alive对象。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">do</span> &#123;                                                                   \</span><br><span class="line">   <span class="comment">/* prefetch beyond end */</span>                                            \</span><br><span class="line">   Prefetch::write(end, interval);                                      \</span><br><span class="line">   end += block_size(end);                                              \</span><br><span class="line"> &#125; <span class="keyword">while</span> (end &lt; t &amp;&amp; (!block_is_obj(end) || !oop(end)-&gt;is_gc_marked()));</span><br></pre></td></tr></table></figure>
+<p>然后判断中间的碎片是否需要跳过，如果需要跳过，除了满足上文提到的<code>allowed_deadspace</code>条件，还有当前指针必须是compact_top时，才能跳过，否则就跳不过了。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (allowed_deadspace &gt; <span class="number">0</span> &amp;&amp; q == <span class="keyword">compact_t</span>op) &#123;                       \</span><br><span class="line">  <span class="keyword">size_t</span> sz = pointer_delta(end, q);                                   \</span><br><span class="line">  <span class="keyword">if</span> (insert_deadspace(allowed_deadspace, q, sz)) &#123;                    \</span><br><span class="line">    <span class="keyword">compact_t</span>op = cp-&gt;space-&gt;forward(oop(q), sz, cp, <span class="keyword">compact_t</span>op);     \</span><br><span class="line">    q = end;                                                           \</span><br><span class="line">    end_of_live = end;                                                 \</span><br><span class="line">    <span class="keyword">continue</span>;                                                          \</span><br><span class="line">  &#125;                                                                    \</span><br><span class="line">&#125;                                                                      \</span><br></pre></td></tr></table></figure>
+<p>如果不能跳过，则需要修正当前liveRange的值，并且开始一个新的liveRange， liveRange记录了最近一次alive对象组成的连续空间，liveRange复用了free space空间，liveRange在下一步需要遍历alive对象时，可以跳过其间的碎片。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"> <span class="keyword">if</span> (liveRange) &#123;                                                       \</span><br><span class="line">  liveRange-&gt;set_end(q);                                               \</span><br><span class="line">&#125;     </span><br><span class="line">liveRange = (LiveRange*)q;                                             \</span><br><span class="line">liveRange-&gt;set_start(end);                                             \</span><br><span class="line">liveRange-&gt;set_end(end);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+</ol>
+<h2 id="更新引用地址">更新引用地址</h2><p>经过上一步之后，每个alive对象的forwarding指针都记录了以后将要挪到的位置。在这一步里，修改所有引用这些对象的指针的地址。<br>核心代码入口： CompactibleSpace::adjust_pointers</p>
+<ol>
+<li><p>在第二步里，有可能在一开始的地方，保留了一部分碎片（不是alive的对象），所以，需要遍历范围里面所有的对象，包括dead的对象。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (q &lt; t &amp;&amp; _first_dead &gt; q &amp;&amp;                                               \</span><br><span class="line">      !oop(q)-&gt;is_gc_marked()) &#123;                                                \</span><br><span class="line">    HeapWord* end = _first_dead;                                                \</span><br><span class="line">                                                                                \</span><br><span class="line">    <span class="keyword">while</span> (q &lt; end) &#123;                                                           \</span><br><span class="line">      <span class="comment">/* point all the oops to the new location */</span>                              \</span><br><span class="line">      <span class="keyword">size_t</span> size = oop(q)-&gt;adjust_pointers();                                  \</span><br><span class="line">      size = adjust_obj_size(size);                                             \</span><br><span class="line">                                                                                \</span><br><span class="line">      q += size;                                                                \</span><br><span class="line">    &#125;                                                                           \</span><br><span class="line">                                                                                \</span><br><span class="line">    <span class="keyword">if</span> (_first_dead == t) &#123;                                                     \</span><br><span class="line">      q = t;                                                                    \</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;                                                                    \</span><br><span class="line">      <span class="comment">/* $$$ This is funky.  Using this to read the previously written          \</span><br><span class="line">       * LiveRange.  See also use below. */</span>                                     \</span><br><span class="line">      q = (HeapWord*)oop(_first_dead)-&gt;mark()-&gt;decode_pointer();                \</span><br><span class="line">    &#125;                                                                           \</span><br><span class="line">  &#125;                                                                             \</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>处理后面的alive对象，当处理的对象不是alive的，那么保留着下一个alive对象的指针，所以可以越过dead的对象。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">while</span> (q &lt; t) &#123;                                                               \</span><br><span class="line">  <span class="comment">/* prefetch beyond q */</span>                                                     \</span><br><span class="line">  Prefetch::write(q, interval);                                               \</span><br><span class="line">  <span class="keyword">if</span> (oop(q)-&gt;is_gc_marked()) &#123;                                               \</span><br><span class="line">    <span class="comment">/* q is alive */</span>                                                          \</span><br><span class="line">    VALIDATE_MARK_SWEEP_ONLY(MarkSweep::track_interior_pointers(oop(q)));     \</span><br><span class="line">    <span class="comment">/* point all the oops to the new location */</span>                              \</span><br><span class="line">    <span class="keyword">size_t</span> size = oop(q)-&gt;adjust_pointers();                                  \</span><br><span class="line">    size = adjust_obj_size(size);                                             \</span><br><span class="line">    VALIDATE_MARK_SWEEP_ONLY(MarkSweep::check_interior_pointers());           \</span><br><span class="line">    VALIDATE_MARK_SWEEP_ONLY(MarkSweep::validate_live_oop(oop(q), size));     \</span><br><span class="line">    debug_only(prev_q = q);                                                   \</span><br><span class="line">    q += size;                                                                \</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;                                                                    \</span><br><span class="line">    <span class="comment">/* q is not a live object, so its mark should point at the next           \</span><br><span class="line">     * live object */</span>                                                         \</span><br><span class="line">    debug_only(prev_q = q);                                                   \</span><br><span class="line">    q = (HeapWord*) oop(q)-&gt;mark()-&gt;decode_pointer();                         \</span><br><span class="line">    assert(q &gt; prev_q, <span class="string">"we should be moving forward through memory"</span>);         \</span><br><span class="line">  &#125;                                                                           \</span><br><span class="line">&#125;                                                                             \</span><br><span class="line">                                                                              \</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h2 id="将对象移动到新的地址">将对象移动到新的地址</h2><p>现在开始挪动，入口在<code>CompactibleSpace::compact</code>。</p>
+<ol>
+<li><p>首先跳过包含保留了一部分碎片的部分。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (q &lt; t &amp;&amp; _first_dead &gt; q &amp;&amp;                                               \</span><br><span class="line">    !oop(q)-&gt;is_gc_marked()) &#123;                                                \</span><br><span class="line">  <span class="keyword">if</span> (_first_dead == t) &#123;                                                     \</span><br><span class="line">    q = t;                                                                    \</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;                                                                    \</span><br><span class="line">    <span class="comment">/* $$$ Funky */</span>                                                           \</span><br><span class="line">    q = (HeapWord*) oop(_first_dead)-&gt;mark()-&gt;decode_pointer();               \</span><br><span class="line">  &#125;                                                                           \</span><br><span class="line">&#125;                                                                             \</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>处理后面的alive对象，当处理的对象不是alive的，那么保留着下一个alive对象的指针，所以可以越过dead的对象。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">while</span> (q &lt; t) &#123;                                                               \</span><br><span class="line">  <span class="keyword">if</span> (!oop(q)-&gt;is_gc_marked()) &#123;                                              \</span><br><span class="line">    <span class="comment">/* mark is pointer to next marked oop */</span>                                  \</span><br><span class="line">    debug_only(prev_q = q);                                                   \</span><br><span class="line">    q = (HeapWord*) oop(q)-&gt;mark()-&gt;decode_pointer();                         \</span><br><span class="line">    assert(q &gt; prev_q, <span class="string">"we should be moving forward through memory"</span>);         \</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;                                                                    \</span><br><span class="line">    <span class="comment">/* prefetch beyond q */</span>                                                   \</span><br><span class="line">    Prefetch::read(q, scan_interval);                                         \</span><br><span class="line">                                                                              \</span><br><span class="line">    <span class="comment">/* size and destination */</span>                                                \</span><br><span class="line">    <span class="keyword">size_t</span> size = obj_size(q);                                                \</span><br><span class="line">    HeapWord* <span class="keyword">compaction_t</span>op = (HeapWord*)oop(q)-&gt;forwardee();                \</span><br><span class="line">                                                                              \</span><br><span class="line">    <span class="comment">/* prefetch beyond compaction_top */</span>                                      \</span><br><span class="line">    Prefetch::write(<span class="keyword">compaction_t</span>op, copy_interval);                           \</span><br><span class="line">                                                                              \</span><br><span class="line">    <span class="comment">/* copy object and reinit its mark */</span>                                     \</span><br><span class="line">    VALIDATE_MARK_SWEEP_ONLY(MarkSweep::<span class="keyword">live_oop_moved_t</span>o(q, size,            \</span><br><span class="line">                                                          <span class="keyword">compaction_t</span>op));   \</span><br><span class="line">    assert(q != <span class="keyword">compaction_t</span>op, <span class="string">"everything in this pass should be moving"</span>);  \</span><br><span class="line">    Copy::aligned_conjoint_words(q, <span class="keyword">compaction_t</span>op, size);                    \</span><br><span class="line">    oop(<span class="keyword">compaction_t</span>op)-&gt;init_mark();                                         \</span><br><span class="line">    assert(oop(<span class="keyword">compaction_t</span>op)-&gt;klass() != NULL, <span class="string">"should have a class"</span>);      \</span><br><span class="line">                                                                              \</span><br><span class="line">    debug_only(prev_q = q);                                                   \</span><br><span class="line">    q += size;                                                                \</span><br><span class="line">  &#125;                                                                           \</span><br><span class="line">&#125;                                                                             \</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+	<div class="article-share" id="share">
+	
+	  <div data-url="http://jangzq.info/2015/08/02/tenure_collect/" data-title="TenuredGeneration垃圾收集 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  </div>
+	
+	</div>
+
+
+</footer>
+
+   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+
+<div class="next">
+<a href="/2015/07/31/ParNewGeneration_collect/"  title="ParNewGeneration垃圾收集">
+ <strong>下一篇：</strong><br/> 
+ <span>ParNewGeneration垃圾收集
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="显示侧边栏"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">文章目录</strong>
+ 
+ <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#标记live对象"><span class="toc-number">1.</span> <span class="toc-text">标记live对象</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#计算对象新的地址"><span class="toc-number">2.</span> <span class="toc-text">计算对象新的地址</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#更新引用地址"><span class="toc-number">3.</span> <span class="toc-text">更新引用地址</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#将对象移动到新的地址"><span class="toc-number">4.</span> <span class="toc-text">将对象移动到新的地址</span></a></li></ol>
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="隐藏侧边栏"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+<div class="tagslist">
+	<p class="asidetitle">标签</p>
+		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>11</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>1</sup></a></li>
+			
+		
+		</ul>
+</div>
+
+
+  <div class="linkslist">
+  <p class="asidetitle">友情链接</p>
+    <ul>
+        
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS 订阅</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	
+	<section class="info">
+		<p> Jangzq&#39;s blog <br/>
+			Focus on the secret of code!</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		<a href="http://weibo.com/Jangzq" target="_blank" class="icon-weibo" title="微博"></a>
+		
+		
+		<a href="https://github.com/Jangzq" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:zqzhangmail@163.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+			
+		
+
+		<p class="copyright">
+		Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Jacman">Jacman</a> © 2015 
+		
+		<a href="/about" target="_blank" title="Zhang Zq">Zhang Zq</a>
+		
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script src="/js/jquery.imagesloaded.min.js"></script>
+<script src="/js/gallery.js"></script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+  
+        getSize();
+        if (myWidth >= 1024) {
+          c.click();
+        }
+  
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else{
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  c.click(function(){
+    ta.css('display', 'block').addClass('fadeIn');
+  });
+  o.click(function(){
+    ta.css('display', 'none');
+  });
+  $(window).scroll(function(){
+    ta.css("top",Math.max(140,320-$(this).scrollTop()));
+  });
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#nothing"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="微信"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="微博"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+<!-- Analytics Begin -->
+
+
+
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3F435d1985a249fde8415798105b4f848b' type='text/javascript'%3E%3C/script%3E"));
+</script>
+
+
+
+<!-- Analytics End -->
+
+<!-- Totop Begin -->
+
+	<div id="totop">
+	<a title="返回顶部"><img src="/img/scrollup.png"/></a>
+	</div>
+	<script src="/js/totop.js"></script>
+
+<!-- Totop End -->
+
+<!-- MathJax Begin -->
+<!-- mathjax config similar to math.stackexchange -->
+
+
+<!-- MathJax End -->
+
+<!-- Tiny_search Begin -->
+
+<!-- Tiny_search End -->
+
+  </body>
+</html>

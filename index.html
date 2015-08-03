@@ -77,6 +77,70 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
+      <a href="/2015/08/02/tenure_collect/" title="TenuredGeneration垃圾收集" itemprop="url">TenuredGeneration垃圾收集</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-08-02T11:57:26.000Z" itemprop="datePublished"> 发表于 2015-08-02</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>当使用TenuredGeneration作为Old generation时，垃圾收集方法的入口为： <code>TenuredGeneration::collect</code>，只有在full gc时调用，其核心的程序在<code>GenMarkSweep::invoke_at_safepoint</code>中，其主要操作分为4步：</p>
+<ol>
+<li>标记live的对象，对应<code>mark_sweep_phase1</code>方法。</li>
+<li>计算对象新的地址， 对应<code>mark_sweep_phase2</code>方法。</li>
+<li>更新引用地址，对应<code>mark_sweep_phase3</code>方法。</li>
+<li>将对象移动到新的地址，对应<code>mark_sweep_phase4</code>方法。<br>可以看出，这是一个mark-compact算法，经过以上操作后，不存在内存碎片。</li>
+</ol>
+<h2 id="标记live对象">标记live对象</h2>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/08/02/tenure_collect/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
       <a href="/2015/07/31/ParNewGeneration_collect/" title="ParNewGeneration垃圾收集" itemprop="url">ParNewGeneration垃圾收集</a>
   </h1>
   <p class="article-author">By
@@ -654,67 +718,6 @@
 
 
 
-   
-    
-    <article class="post-expand post" itemprop="articleBody"> 
-        <header class="article-info clearfix">
-  <h1 itemprop="name">
-    
-      <a href="/2015/06/28/tlab/" title="HotSpot的TLAB实现解析" itemprop="url">HotSpot的TLAB实现解析</a>
-  </h1>
-  <p class="article-author">By
-       
-		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
-		
-  <p class="article-time">
-    <time datetime="2015-06-28T09:12:50.000Z" itemprop="datePublished"> 发表于 2015-06-28</time>
-    
-  </p>
-</header>
-    <div class="article-content">
-        
-        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>本文解析了TLAB的实现机制，最后讨论了如何利用TLAB机制，进行高效程序设计，如果你对原理不感兴趣，也请看下<strong>启示</strong>部分。</p>
-<p>内存分配是虚拟机最常见的操作之一，所以处理效率高低对整体性能有很大的影响。同时，虚拟机是一个多线程的运行环境，内存分配也不可避免的受到并发的制约，而锁又是造成性能下降的主因之一，即使使用CAS，对于如此频繁的操作也是巨大的性能负担。<br>一个自然而然的想法是将内存分为几个部分，每个线程只使用自己的内存区域，这样内存分配就不用进行同步，当然能达到较高的效率，TLAB就是这种想法的产物。每一个线程都有自己的一片内存区域，这片区域就叫<strong>TLAB(Thread Local alloc Buffer)</strong>，虚拟机的任务就是合理的分配TLAB的大小，使内存分配都尽量在TLAB中完成，以达到更高的效率。</p>
-<h2 id="TLAB机制解析">TLAB机制解析</h2><p>hotspot用Thread类（Thread.cpp，不是java类）来描述一个线程，在Thread类里有一个<code>ThreadLocalAllocBuffer _tlab</code>变量，表征这个线程的tlab。在ThreadLocalAllocBuffer 类里，有三个属性描述了tlab的范围及使用情况，<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* _start;      <span class="comment">//当前tlab的起始地址</span></span><br><span class="line">HeapWord* <span class="keyword">_t</span>op;        <span class="comment">//最后一次在tlab上分配内存后的指针位置。</span></span><br><span class="line">HeapWord* _end;       <span class="comment">//tlab的结束地址。</span></span><br></pre></td></tr></table></figure></p>
-<p>采用这样的方法，首先要考虑，给每个线程的TLAB分配多大空间。分配大了，别的线程又无法使用，造成了浪费；分配小了，剩余的空间不够分配的时候，还需要采用别的方式分配。每个线程需要分配的内存是不同的，有的线程需要分配的内存多，有的现场分配的内存少，给所有线程分配同样大小的TLAB空间显然是不适合的。另外，一个线程不同的时间可能有不同的内存要求，这段时间使用内存多，过一会儿又少了，所以给一个线程固定的TLAB空间显然也是不适合的。也就是，需要解决下面两个问题：1）一个线程的TLAB初始时分配多大。2）什么时候进行动态调整，调整成多大。本文将围绕这两个问题，深入hotspot源码，探究答案。</p>
-<h3 id="初始分配">初始分配</h3>
-        
-        
-        <p class="article-more-link">
-          
-            <a href="/2015/06/28/tlab/#more">Read More</a>
-          
-       </p>
-    </div>
-    <footer class="article-footer clearfix">
-<div class="article-catetags">
-
-
-  <div class="article-tags">
-  
-  <span></span> <a href="/tags/jvm/">jvm</a>
-  </div>
-
-</div>
-
-
-
-
-<div class="comments-count">
-	
-</div>
-
-</footer>
-
-
-    </article>
-
-
-
-
-
-
 
   <nav id="page-nav" class="clearfix">
     <span class="page-number current">1</span><a class="page-number" href="/page/2/">2</a><a class="extend next" rel="next" href="/page/2/">Next<span></span></a>
@@ -735,7 +738,7 @@
 		<ul class="clearfix">
 		
 			
-				<li><a href="/tags/jvm/" title="jvm">jvm<sup>10</sup></a></li>
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>11</sup></a></li>
 			
 		
 			

@@ -77,6 +77,83 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
+      <a href="/2015/08/04/socket_kernel_struct/" title="socket内核基础数据结构" itemprop="url">socket内核基础数据结构</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-08-04T15:52:28.000Z" itemprop="datePublished"> 发表于 2015-08-04</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>这是“自顶向下话socket”系列的第一篇，本系列文章计划从java到linux内核，讲解socket的方方面面。除了本篇，其余文章都遵循从顶向下的原则，从java到内核。之所以以本篇作为此系列的第一篇，是因为只有了解本篇中的内容，才能理解后续相关文章，本篇内容在后续文章中将会多次提到。</p>
+<h2 id="Protocol_family">Protocol family</h2><p>socket作为一种网络编程接口，支持多种协议族，比如IP、Unix domain sockets、Novell IPX等等。linux内核支持的所有协议族常量定义在<code>linux/socket.h</code>中，比如：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="preprocessor">#<span class="keyword">define</span> AF_UNIX     1   /* Unix domain sockets      */</span></span><br><span class="line"><span class="preprocessor">#<span class="keyword">define</span> AF_INET     2   /* Internet IP Protocol     */</span></span><br></pre></td></tr></table></figure></p>
+<p>描述协议族的结构是<code>net_proto_family</code>，每一个协议族都必须提供一个net_proto_family变量，这个结构的定义如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">struct</span> net_proto_family &#123;</span><br><span class="line">    <span class="keyword">int</span>     family;</span><br><span class="line">    <span class="keyword">int</span>     (*create)(<span class="keyword">struct</span> net *net, <span class="keyword">struct</span> socket *sock,</span><br><span class="line">                  <span class="keyword">int</span> protocol, <span class="keyword">int</span> kern);</span><br><span class="line">    <span class="keyword">struct</span> module   *owner;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>其中，<strong>family</strong>即<em>socket.h</em>中定义的常量，而<strong>create</strong>则是一个方法指针，每个协议族依靠此方法提供创建本协议族socket的方法，下面举一个inet协议族的例子。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">struct</span> net_proto_family inet_family_ops = &#123;</span><br><span class="line">    .family = PF_INET,</span><br><span class="line">    .create = inet_create,</span><br><span class="line">    .owner  = THIS_MODULE,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>所有协议族的定义保存在<code>net_families</code>数组里，其声明如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">struct</span> net_proto_family __rcu *net_families[NPROTO] __read_mostly;</span><br></pre></td></tr></table></figure></p>
+<p>注册的过程即向net_families添加元素的过程，通过<code>sock_register</code>方法实现。</p>
+<h2 id="proto">proto</h2><p>每一个四层协议，如TCP、UDP，都有一个proto结构体，当创建了此协议的socket后，相应的proto变量会保存在socket中，供socket操作使用。proto结构里主要定义了以下几类信息：</p>
+<ol>
+<li>协议操作的方法指针，比如关闭一个socket需要调用的close方法指针：<code>void (*close)(struct sock *sk, long timeout)</code>，建立连接使用的connect方法指针：<code>int (*connect)(struct sock *sk, struct sockaddr *uaddr,         int addr_len)</code>，发送数据使用的sendmsg方法指针：<code>int (*sendmsg)(struct kiocb *iocb, struct sock *sk,  struct msghdr *msg, size_t len)</code>等等，在以后的文章中用到了再详细说明。</li>
+<li>保存协议范围的状态、信息。比如分配内存使用的slab cache: <code>struct kmem_cache   *slab</code>，当前socket数：<code>struct percpu_counter   *sockets_allocated</code>等，在以后的文章中用到了再详细说明。</li>
+</ol>
+<h2 id="inet_protosw">inet_protosw</h2><p>inet_protosw可以说是协议族和协议之间的桥梁。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">struct</span> inet_protosw &#123;</span><br><span class="line">    <span class="keyword">struct</span> list_head <span class="built_in">list</span>;</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* These two fields form the lookup key.  */</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">short</span>   type;     <span class="comment">/* This is the 2nd argument to socket(2). */</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">short</span>   protocol; <span class="comment">/* This is the L4 protocol number.  */</span></span><br><span class="line"></span><br><span class="line">    <span class="keyword">struct</span> proto     *prot;</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">struct</span> proto_ops *ops;</span><br><span class="line">  </span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">char</span>    flags;      <span class="comment">/* See INET_PROTOSW_* below.  */</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>其中，<strong>type</strong>为socket的type，socket函数的第二个参数，具体值见附录: “SOCKET TYPE”。<strong>protocol</strong>为传输层的协议号，定义在<code>./include/uapi/linux/in.h</code>中。<strong>ops</strong>: 通用的接口，其中有可能调用prot的方法，proto_ops的部分属性见附录“proto_ops”。<br>以TCP协议为例：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">&#123;</span><br><span class="line">    .type =       SOCK_STREAM,</span><br><span class="line">    .protocol =   IPPROTO_TCP,</span><br><span class="line">    .prot =       &amp;tcp_prot,</span><br><span class="line">    .ops =        &amp;inet_stream_ops,</span><br><span class="line">    .flags =      INET_PROTOSW_PERMANENT |</span><br><span class="line">              INET_PROTOSW_ICSK,</span><br><span class="line">&#125;,</span><br></pre></td></tr></table></figure></p>
+<p>在inet协议族中，所支持的协议定义在<code>static struct inet_protosw inetsw_array[]</code>中，并且在初始化时，构建为<code>static struct list_head inetsw[SOCK_MAX]</code>，此数组的每个元素为一个socket type的list。</p>
+<h2 id="socket结构">socket结构</h2><p>socket数据结构是一个socket在内核中的体现，定义如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">struct</span> socket &#123;</span><br><span class="line">    socket_state        state;</span><br><span class="line"></span><br><span class="line">    kmemcheck_bitfield_begin(type);</span><br><span class="line">    <span class="keyword">short</span>           type;</span><br><span class="line">    kmemcheck_bitfield_end(type);</span><br><span class="line"></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span>       flags;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">struct</span> socket_wq __rcu  *wq;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">struct</span> file     *file;</span><br><span class="line">    <span class="keyword">struct</span> sock     *sk;</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">struct</span> proto_ops  *ops;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>其中，<strong>state</strong>为Socket的状态，具体值见附录：“socket状态”， <strong>type</strong>为socket的类型，具体值见附录：“SOCKET TYPE”。<strong>file</strong>: 回指到file的指针。<strong>sk</strong>: 与网络协议有关的socket的属性，指向的是sock的子类，而不一定是sock结构。由于这个成员很多，涉及到很多方面，以后用到的时候再进行说明。<strong>ops</strong>: 通用的接口，其中有可能调用prot的方法，proto_ops的部分属性见附录“proto_ops”。<strong>flags</strong>: 标识着socket一些状态，比如队列是否已满等等，后续用到时再进行说明。<strong>wq</strong>: 等待队列。</p>
+<h2 id="sock结构">sock结构</h2><p>sock是公用属性，其“子类”存放协议相关属性（c语言实现继承，如不清楚请自行google），其继承关系举例为：<br><img src="/images/sock.png" alt="sock继承"></p>
+<h2 id="sockfs文件系统">sockfs文件系统</h2><p>为了socket能像文件一样处理，在内核中定义了一种特殊的文件系统-sockfs，定义如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">struct</span> <span class="keyword">file_system_t</span>ype <span class="keyword">sock_fs_t</span>ype = &#123; </span><br><span class="line">    .name =     <span class="string">"sockfs"</span>, </span><br><span class="line">    .mount =    sockfs_mount, </span><br><span class="line">    .kill_sb =  kill_anon_super, </span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>其中sockfs_mount为mount方法，当mount这种类型的文件系统时，将会调用这个方法。<br>在系统初始化时，mount了一个sockfs类型的文件系统。其中super_operations为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">struct</span> super_operations sockfs_ops = &#123;</span><br><span class="line">    .alloc_inode    = sock_alloc_inode,</span><br><span class="line">    .destroy_inode  = sock_destroy_inode,</span><br><span class="line">    .statfs     = simple_statfs,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<h2 id="附录">附录</h2><h3 id="SOCKET_TYPE">SOCKET TYPE</h3><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">enum</span> <span class="keyword">sock_t</span>ype &#123;</span><br><span class="line">    SOCK_STREAM = <span class="number">1</span>,</span><br><span class="line">    SOCK_DGRAM  = <span class="number">2</span>,</span><br><span class="line">    SOCK_RAW    = <span class="number">3</span>,</span><br><span class="line">    SOCK_RDM    = <span class="number">4</span>,</span><br><span class="line">    SOCK_SEQPACKET  = <span class="number">5</span>,</span><br><span class="line">    SOCK_DCCP   = <span class="number">6</span>,</span><br><span class="line">    SOCK_PACKET = <span class="number">10</span>,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+<h3 id="proto_ops">proto_ops</h3><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">struct</span> proto_ops &#123;</span><br><span class="line">    <span class="keyword">int</span>     family;</span><br><span class="line">    <span class="keyword">struct</span> module   *owner;</span><br><span class="line">    <span class="keyword">int</span>     (*release)   (<span class="keyword">struct</span> socket *sock);</span><br><span class="line">    <span class="keyword">int</span>     (*bind)      (<span class="keyword">struct</span> socket *sock,</span><br><span class="line">                      <span class="keyword">struct</span> sockaddr *myaddr,</span><br><span class="line">                      <span class="keyword">int</span> sockaddr_len);</span><br><span class="line">    <span class="keyword">int</span>     (*connect)   (<span class="keyword">struct</span> socket *sock,</span><br><span class="line">                      <span class="keyword">struct</span> sockaddr *vaddr,</span><br><span class="line">                      <span class="keyword">int</span> sockaddr_len, <span class="keyword">int</span> flags);</span><br><span class="line">    <span class="keyword">int</span>     (*socketpair)(<span class="keyword">struct</span> socket *sock1,</span><br><span class="line">                      <span class="keyword">struct</span> socket *sock2);</span><br><span class="line">    <span class="keyword">int</span>     (*accept)    (<span class="keyword">struct</span> socket *sock,</span><br><span class="line">                      <span class="keyword">struct</span> socket *newsock, <span class="keyword">int</span> flags);</span><br><span class="line">  ...........</span><br></pre></td></tr></table></figure>
+<h3 id="socket状态">socket状态</h3><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">typedef</span> <span class="keyword">enum</span> &#123;</span><br><span class="line">    SS_FREE = <span class="number">0</span>,            <span class="comment">/* not allocated        */</span></span><br><span class="line">    SS_UNCONNECTED,         <span class="comment">/* unconnected to any socket    */</span></span><br><span class="line">    SS_CONNECTING,          <span class="comment">/* in process of connecting */</span></span><br><span class="line">    SS_CONNECTED,           <span class="comment">/* connected to socket      */</span></span><br><span class="line">    SS_DISCONNECTING        <span class="comment">/* in process of disconnecting  */</span></span><br><span class="line">&#125; socket_state;</span><br></pre></td></tr></table></figure>
+
+        
+        
+        <p class="article-more-link">
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/linux内核/">linux内核</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
       <a href="/2015/08/02/tenure_collect/" title="TenuredGeneration垃圾收集" itemprop="url">TenuredGeneration垃圾收集</a>
   </h1>
   <p class="article-author">By
@@ -653,71 +730,6 @@
 
 
 
-   
-    
-    <article class="post-expand post" itemprop="articleBody"> 
-        <header class="article-info clearfix">
-  <h1 itemprop="name">
-    
-      <a href="/2015/07/02/classpath_jar/" title="classpath中没用到的jar的影响" itemprop="url">classpath中没用到的jar的影响</a>
-  </h1>
-  <p class="article-author">By
-       
-		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
-		
-  <p class="article-time">
-    <time datetime="2015-07-02T13:19:16.000Z" itemprop="datePublished"> 发表于 2015-07-02</time>
-    
-  </p>
-</header>
-    <div class="article-content">
-        
-        <p>有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。<br>通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">jzfile *  ZIP_Put_In_Cache0(<span class="keyword">const</span> <span class="keyword">char</span> *name, ZFILE zfd, <span class="keyword">char</span> **pmsg, jlong lastModified, jboolean usemmap)</span><br></pre></td></tr></table></figure></p>
-<p>在这个方法里，调用<code>static jlong readCEN(jzfile *zip, jint knownTotal)</code>方法“读取”了zip的central directory部分，里面关键的一句为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">mappedAddr = mmap64(<span class="number">0</span>, zip-&gt;mlen, PROT_READ, MAP_SHARED, zip-&gt;zfd, (<span class="keyword">off64_t</span>) offset)</span><br></pre></td></tr></table></figure></p>
-<p>即：将zip的 central directory部分进行了文件映射。上文中“读取”两字，我加了引号，就是因为并不是真正的读取了这块儿内容，而是采用文件映射的方式，将文件的这部分内容映射进了内存空间。这个方法里有一处值得我们注意，即是用了MAP_SHARED参数，即这一块儿空间是和其他进程共享的。<br>在JDK6之前，map了这个jar文件，这样占用了大量的地址空间（并没有占用内存），所以改为只映射 central directory，因为 central directory中包含检索包含文件的全部信息。<br>通过pmap，我们可以看到内存映射：</p>
-<blockquote>
-<p>00007f7bb818a000  63960K ——-   [ anon ]<br>00007f7bbc00a000      8K r—s- axis-ant-1.2.1.jar<br>00007f7bbc00c000      8K r—s- asm-attrs.jar<br>00007f7bbc00e000     20K r—s- antlr-2.7.6rc1.jar<br>00007f7bbc013000     28K r—s- ant-1.4.1.jar<br>00007f7bbc01a000     52K r—s- acegi-security-1.0.7.jar<br>00007f7bbc027000     44K r—s- charsets.jar<br>00007f7bbc032000   5968K rw—-   [ anon ]<br>00007f7bbc606000   1788K r—s- rt.jar<br>00007f7bbc7c5000   5264K rw—-   [ anon ]</p>
-</blockquote>
-<p>通过上述分析，我们可以得到如下结论：</p>
-<ul>
-<li>classpath包含的jar，会把 central directory映射到内存中去，在load class时会进行访问，所以会占用内存。如果jar文件较多，而且比较大，也会占用不少空间。</li>
-<li>对于一台主机上的不同java进程，引用相同的jar，最好使用同一个文件，这样会共享同一块内存，减少内存占用。</li>
-</ul>
-
-        
-        
-        <p class="article-more-link">
-          
-       </p>
-    </div>
-    <footer class="article-footer clearfix">
-<div class="article-catetags">
-
-
-  <div class="article-tags">
-  
-  <span></span> <a href="/tags/jvm/">jvm</a>
-  </div>
-
-</div>
-
-
-
-
-<div class="comments-count">
-	
-</div>
-
-</footer>
-
-
-    </article>
-
-
-
-
-
-
 
   <nav id="page-nav" class="clearfix">
     <span class="page-number current">1</span><a class="page-number" href="/page/2/">2</a><a class="extend next" rel="next" href="/page/2/">Next<span></span></a>
@@ -742,7 +754,7 @@
 			
 		
 			
-				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>1</sup></a></li>
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>2</sup></a></li>
 			
 		
 		</ul>

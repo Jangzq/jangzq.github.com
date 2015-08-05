@@ -22,7 +22,7 @@ Protocol familysocket作为">
 这是“自顶向下话socket”系列的第一篇，本系列文章计划从java到linux内核，讲解socket的方方面面。除了本篇，其余文章都遵循从顶向下的原则，从java到内核。之所以以本篇作为此系列的第一篇，是因为只有了解本篇中的内容，才能理解后续相关文章，本篇内容在后续文章中将会多次提到。
 Protocol familysocket作为">
 <meta property="og:image" content="http://jangzq.info/images/sock.png">
-<meta property="og:updated_time" content="2015-08-04T15:56:00.000Z">
+<meta property="og:updated_time" content="2015-08-04T15:57:54.000Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="socket内核基础数据结构">
 <meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
@@ -107,6 +107,7 @@ Protocol familysocket作为">
 <p>这是“自顶向下话socket”系列的第一篇，本系列文章计划从java到linux内核，讲解socket的方方面面。除了本篇，其余文章都遵循从顶向下的原则，从java到内核。之所以以本篇作为此系列的第一篇，是因为只有了解本篇中的内容，才能理解后续相关文章，本篇内容在后续文章中将会多次提到。</p>
 <h2 id="Protocol_family">Protocol family</h2><p>socket作为一种网络编程接口，支持多种协议族，比如IP、Unix domain sockets、Novell IPX等等。linux内核支持的所有协议族常量定义在<code>linux/socket.h</code>中，比如：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="preprocessor">#<span class="keyword">define</span> AF_UNIX     1   /* Unix domain sockets      */</span></span><br><span class="line"><span class="preprocessor">#<span class="keyword">define</span> AF_INET     2   /* Internet IP Protocol     */</span></span><br></pre></td></tr></table></figure></p>
 <p>描述协议族的结构是<code>net_proto_family</code>，每一个协议族都必须提供一个net_proto_family变量，这个结构的定义如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">struct</span> net_proto_family &#123;</span><br><span class="line">    <span class="keyword">int</span>     family;</span><br><span class="line">    <span class="keyword">int</span>     (*create)(<span class="keyword">struct</span> net *net, <span class="keyword">struct</span> socket *sock,</span><br><span class="line">                  <span class="keyword">int</span> protocol, <span class="keyword">int</span> kern);</span><br><span class="line">    <span class="keyword">struct</span> module   *owner;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<a id="more"></a>
 <p>其中，<strong>family</strong>即<em>socket.h</em>中定义的常量，而<strong>create</strong>则是一个方法指针，每个协议族依靠此方法提供创建本协议族socket的方法，下面举一个inet协议族的例子。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">struct</span> net_proto_family inet_family_ops = &#123;</span><br><span class="line">    .family = PF_INET,</span><br><span class="line">    .create = inet_create,</span><br><span class="line">    .owner  = THIS_MODULE,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
 <p>所有协议族的定义保存在<code>net_families</code>数组里，其声明如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">struct</span> net_proto_family __rcu *net_families[NPROTO] __read_mostly;</span><br></pre></td></tr></table></figure></p>
 <p>注册的过程即向net_families添加元素的过程，通过<code>sock_register</code>方法实现。</p>
@@ -156,6 +157,14 @@ Protocol familysocket作为">
 	
 <nav class="article-nav clearfix">
  
+ <div class="prev" >
+ <a href="/2015/08/06/linux-file-limit/" title="深入分析linux打开文件数限制">
+  <strong>上一篇：</strong><br/>
+  <span>
+  深入分析linux打开文件数限制</span>
+</a>
+</div>
+
 
 <div class="next">
 <a href="/2015/08/02/tenure_collect/"  title="TenuredGeneration垃圾收集">
@@ -195,7 +204,7 @@ Protocol familysocket作为">
 			
 		
 			
-				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>2</sup></a></li>
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>3</sup></a></li>
 			
 		
 		</ul>

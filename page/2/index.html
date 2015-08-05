@@ -77,6 +77,68 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
+      <a href="/2015/07/03/CollectedHeapCollectorPolicy/" title="垃圾收集框架：CollectedHeap和CollectorPolicy" itemprop="url">垃圾收集框架：CollectedHeap和CollectorPolicy</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-03T14:10:27.000Z" itemprop="datePublished"> 发表于 2015-07-03</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
+<p>hotspot的垃圾收集框架有两个主要的组成部分，其一是CollectedHeap、其一是CollectorPolicy。根据不同的启动参数，hotspot选择相应的Heap和Policy。<br>首先我们看一下类图，看一下有多少种CollectedHeap和CollectorPolicy。</p>
+<p><img src="/images/heap_policy.png" alt="类图"></p>
+<p>下面列出的是CollectorPolicy和CollectedHeap的关键属性和方法，我们以此来看一下Policy和Heap各自的特性。</p>
+<h2 id="CollectedHeap">CollectedHeap</h2><p>CollectedHeap是java堆在hotspot中的体现，根据垃圾收集算法的不同，具有不同类型的子类，CollectedHeap的主要功能是分配内存，在这个父类里实现的主要是分配的流程，包括TLAB、其它分配等。但是不负责真正的内存分配，因为内存是由其子类管理，所以只定义这些分配的抽象方法。</p>
+<p><strong>属性</strong><br>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/07/03/CollectedHeapCollectorPolicy/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
       <a href="/2015/07/02/classpath_jar/" title="classpath中没用到的jar的影响" itemprop="url">classpath中没用到的jar的影响</a>
   </h1>
   <p class="article-author">By
@@ -292,7 +354,7 @@
 			
 		
 			
-				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>2</sup></a></li>
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>3</sup></a></li>
 			
 		
 		</ul>

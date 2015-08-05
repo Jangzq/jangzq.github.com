@@ -5,7 +5,7 @@
   <subtitle><![CDATA[关注代码的秘密， 记录探索点滴， 分享技术收获]]></subtitle>
   <link href="/atom.xml" rel="self"/>
   <link href="http://jangzq.info//"/>
-  <updated>2015-08-04T15:56:00.000Z</updated>
+  <updated>2015-08-05T16:11:16.000Z</updated>
   <id>http://jangzq.info//</id>
   
   <author>
@@ -16,15 +16,54 @@
   <generator uri="http://hexo.io/">Hexo</generator>
   
   <entry>
+    <title><![CDATA[深入分析linux打开文件数限制]]></title>
+    <link href="http://jangzq.info/2015/08/06/linux-file-limit/"/>
+    <id>http://jangzq.info/2015/08/06/linux-file-limit/</id>
+    <published>2015-08-05T16:06:55.000Z</published>
+    <updated>2015-08-05T16:11:16.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在linux中，影响打开文件数的参数主要有如下几个：</p>
+<ul>
+<li>ulimit中的nofile参数。</li>
+<li>/proc/sys/fs/nr_open</li>
+<li>/proc/sys/fs/file-max<br>这几个参数各有什么作用，又有什么不同，影响范围是哪些，下面通过源代码来一探究竟。<a id="more"></a>
+<h2 id="ulimit_nofile">ulimit nofile</h2>此参数如何查看，以及如何修改，网上有很多资料，如果不清楚，请参考那些资料。但是你是否有疑问，如果通过<code>ulimit -Sn</code>命令修改的值，为什么只对本shell有效？下面通过源码说明。<br>首先，我们先看一下，这个参数是怎么限制打开文件的。我们都清楚，当一个进程打开一个文件时，linux会在进程范围内分配一个文件描述符，这个操作入口方法如下：<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">get_unused_fd_flags</span><span class="params">(<span class="keyword">unsigned</span> flags)</span></span><br><span class="line"></span>&#123;</span><br><span class="line">    <span class="keyword">return</span> __alloc_fd(current-&gt;files, <span class="number">0</span>, rlimit(RLIMIT_NOFILE), flags);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">int</span> __alloc_fd(<span class="keyword">struct</span> files_struct *files, <span class="keyword">unsigned</span> start, <span class="keyword">unsigned</span> end, <span class="keyword">unsigned</span> flags) &#123;</span><br><span class="line">   .......</span><br><span class="line">    <span class="keyword">if</span> (fd &gt;= end)</span><br><span class="line">        <span class="keyword">goto</span> out;</span><br><span class="line">   .......</span><br><span class="line">out:</span><br><span class="line">    spin_unlock(&amp;files-&gt;file_lock);</span><br><span class="line">    <span class="keyword">return</span> error;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ul>
+<p>通过上面的代码节选，就可以看出，分配文件描述符的时候，是在[0, rlimit(RLIMIT_NOFILE))这个区间选择的，这里先提前说明一下，<code>rlimit(RLIMIT_NOFILE)</code>即我们现在研究的参数。由于最大范围就是这么大，所以当然打不开比这个更多的文件。<br>看了这个参数如何限制文件的打开之后，我们探讨一下这个参数储存在哪里，以及怎么来的。我们查看rlimit的定义，发现这个函数以及它调用的函数如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">inline</span> <span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">rlimit</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">int</span> limit)</span></span><br><span class="line"></span>&#123;</span><br><span class="line">    <span class="keyword">return</span> task_rlimit(current, limit);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">inline</span> <span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">task_rlimit</span><span class="params">(<span class="keyword">const</span> <span class="keyword">struct</span> task_struct *tsk,</span><br><span class="line">        <span class="keyword">unsigned</span> <span class="keyword">int</span> limit)</span></span><br><span class="line"></span>&#123;</span><br><span class="line">    <span class="keyword">return</span> ACCESS_ONCE(tsk-&gt;signal-&gt;rlim[limit].rlim_cur);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>通过上述代码就很清楚的看出，这个参数保存在当前线程的task_struct里，即大名鼎鼎的进程描述符里。在task_struct中的<code>struct signal_struct *signal</code>遍历里保存，定义如下：<code>struct rlimit rlim[RLIM_NLIMITS]</code>。其中rlimit定义为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">struct</span> rlimit &#123;</span><br><span class="line">    <span class="keyword">__kernel_ulong_t</span>    rlim_cur;</span><br><span class="line">    <span class="keyword">__kernel_ulong_t</span>    rlim_max;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>其中的rlim_cur即软限制，rlim_max为硬限制。现在就很清楚了，在shell里使用ulimit命令修改时，其实是修改的本进程的进程描述符里的相关设置，设置之后，启动别的命令时，由于子进程会继承父进程的这个参数，所以也会影响子进程，下面就是fork时拷贝这些参数的代码：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">copy_signal：</span><br><span class="line">    <span class="built_in">memcpy</span>(sig-&gt;rlim, current-&gt;signal-&gt;rlim, <span class="keyword">sizeof</span> sig-&gt;rlim);</span><br></pre></td></tr></table></figure></p>
+<p>掌握上面的原理后，应该很轻松的理解这个参数的影响范围是什么。</p>
+<h2 id="nr_open">nr_open</h2><p>nr_open参数是在创建和扩展进程的文件描述符表时起作用，所以限制也是进程级的，但是影响的范围是所有的用户的进程，使用代码如下：<br>进程中的文件描述符表并不是一开始就设置为最大的，而是根据打开的文件动态扩展的，扩展时的函数为<code>expand_files</code>，在这个函数里：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (nr &gt;= sysctl_nr_open)</span><br><span class="line">       <span class="keyword">return</span> -EMFILE;</span><br></pre></td></tr></table></figure></p>
+<p>另外，需要注意的是，通过ulimit设置nofile时，最大值不能超过nr_open，代码如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (resource == RLIMIT_NOFILE &amp;&amp;</span><br><span class="line">        new_rlim-&gt;rlim_max &gt; sysctl_nr_open)</span><br><span class="line">    <span class="keyword">return</span> -EPERM;</span><br></pre></td></tr></table></figure></p>
+<h2 id="file-max">file-max</h2><p>在linux内核中，维护着一个计数，记录着目前打开了多少文件：<code>static struct percpu_counter nr_files __cacheline_aligned_in_smp</code>。当打开文件时，都要判断这个值是否超过了file-max，如果超过了则不许打开，在<code>get_empty_filp</code>方法里，代码如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (get_nr_files() &gt;= files_stat.max_files &amp;&amp; !capable(CAP_SYS_ADMIN)) &#123;</span><br><span class="line">    <span class="comment">/*</span><br><span class="line">     * percpu_counters are inaccurate.  Do an expensive check before</span><br><span class="line">     * we go and fail.</span><br><span class="line">     */</span></span><br><span class="line">    <span class="keyword">if</span> (percpu_counter_sum_positive(&amp;nr_files) &gt;= files_stat.max_files)</span><br><span class="line">        <span class="keyword">goto</span> over;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>从上面可以看出，这个值是整个系统范围内的。</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在linux中，影响打开文件数的参数主要有如下几个：</p>
+<ul>
+<li>ulimit中的nofile参数。</li>
+<li>/proc/sys/fs/nr_open</li>
+<li>/proc/sys/fs/file-max<br>这几个参数各有什么作用，又有什么不同，影响范围是哪些，下面通过源代码来一探究竟。]]>
+    
+    </summary>
+    
+      <category term="linux内核" scheme="http://jangzq.info/tags/linux%E5%86%85%E6%A0%B8/"/>
+    
+  </entry>
+  
+  <entry>
     <title><![CDATA[socket内核基础数据结构]]></title>
     <link href="http://jangzq.info/2015/08/04/socket_kernel_struct/"/>
     <id>http://jangzq.info/2015/08/04/socket_kernel_struct/</id>
     <published>2015-08-04T15:52:28.000Z</published>
-    <updated>2015-08-04T15:56:00.000Z</updated>
+    <updated>2015-08-04T15:57:54.000Z</updated>
     <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
 <p>这是“自顶向下话socket”系列的第一篇，本系列文章计划从java到linux内核，讲解socket的方方面面。除了本篇，其余文章都遵循从顶向下的原则，从java到内核。之所以以本篇作为此系列的第一篇，是因为只有了解本篇中的内容，才能理解后续相关文章，本篇内容在后续文章中将会多次提到。</p>
 <h2 id="Protocol_family">Protocol family</h2><p>socket作为一种网络编程接口，支持多种协议族，比如IP、Unix domain sockets、Novell IPX等等。linux内核支持的所有协议族常量定义在<code>linux/socket.h</code>中，比如：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="preprocessor">#<span class="keyword">define</span> AF_UNIX     1   /* Unix domain sockets      */</span></span><br><span class="line"><span class="preprocessor">#<span class="keyword">define</span> AF_INET     2   /* Internet IP Protocol     */</span></span><br></pre></td></tr></table></figure></p>
 <p>描述协议族的结构是<code>net_proto_family</code>，每一个协议族都必须提供一个net_proto_family变量，这个结构的定义如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">struct</span> net_proto_family &#123;</span><br><span class="line">    <span class="keyword">int</span>     family;</span><br><span class="line">    <span class="keyword">int</span>     (*create)(<span class="keyword">struct</span> net *net, <span class="keyword">struct</span> socket *sock,</span><br><span class="line">                  <span class="keyword">int</span> protocol, <span class="keyword">int</span> kern);</span><br><span class="line">    <span class="keyword">struct</span> module   *owner;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<a id="more"></a>
 <p>其中，<strong>family</strong>即<em>socket.h</em>中定义的常量，而<strong>create</strong>则是一个方法指针，每个协议族依靠此方法提供创建本协议族socket的方法，下面举一个inet协议族的例子。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">struct</span> net_proto_family inet_family_ops = &#123;</span><br><span class="line">    .family = PF_INET,</span><br><span class="line">    .create = inet_create,</span><br><span class="line">    .owner  = THIS_MODULE,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
 <p>所有协议族的定义保存在<code>net_families</code>数组里，其声明如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">struct</span> net_proto_family __rcu *net_families[NPROTO] __read_mostly;</span><br></pre></td></tr></table></figure></p>
 <p>注册的过程即向net_families添加元素的过程，通过<code>sock_register</code>方法实现。</p>
@@ -47,7 +86,10 @@
 ]]></content>
     <summary type="html">
     <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>这是“自顶向下话socket”系列的第一篇，本系列文章计划从java到linux内核，讲解so]]>
+<p>这是“自顶向下话socket”系列的第一篇，本系列文章计划从java到linux内核，讲解socket的方方面面。除了本篇，其余文章都遵循从顶向下的原则，从java到内核。之所以以本篇作为此系列的第一篇，是因为只有了解本篇中的内容，才能理解后续相关文章，本篇内容在后续文章中将会多次提到。</p>
+<h2 id="Protocol_family">Protocol family</h2><p>socket作为一种网络编程接口，支持多种协议族，比如IP、Unix domain sockets、Novell IPX等等。linux内核支持的所有协议族常量定义在<code>linux/socket.h</code>中，比如：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="preprocessor">#<span class="keyword">define</span> AF_UNIX     1   /* Unix domain sockets      */</span></span><br><span class="line"><span class="preprocessor">#<span class="keyword">define</span> AF_INET     2   /* Internet IP Protocol     */</span></span><br></pre></td></tr></table></figure></p>
+<p>描述协议族的结构是<code>net_proto_family</code>，每一个协议族都必须提供一个net_proto_family变量，这个结构的定义如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">struct</span> net_proto_family &#123;</span><br><span class="line">    <span class="keyword">int</span>     family;</span><br><span class="line">    <span class="keyword">int</span>     (*create)(<span class="keyword">struct</span> net *net, <span class="keyword">struct</span> socket *sock,</span><br><span class="line">                  <span class="keyword">int</span> protocol, <span class="keyword">int</span> kern);</span><br><span class="line">    <span class="keyword">struct</span> module   *owner;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>]]>
+    
     </summary>
     
       <category term="linux内核" scheme="http://jangzq.info/tags/linux%E5%86%85%E6%A0%B8/"/>

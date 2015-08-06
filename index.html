@@ -77,6 +77,68 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
+      <a href="/2015/08/06/jdk_linux_close/" title="自顶向下话socket之blocking io wrapper" itemprop="url">自顶向下话socket之blocking io wrapper</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-08-06T13:28:16.000Z" itemprop="datePublished"> 发表于 2015-08-06</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在JDK中，<code>linux_close.c</code>里对socket中涉及blocking io操作的方法做了封装，主要解决如下问题：</p>
+<ol>
+<li>对于blocking操作，当关闭socket时，必须能从阻塞中退出。</li>
+<li>当阻塞的操作被收到的signal打断时，需要能继续操作。</li>
+</ol>
+<p>JDK中的实现，对于我们自己编写网络应用也很有借鉴意义，所以单独用一篇文章介绍一下，总的思路是1）当调用close时，向所有的阻塞在此fd上的线程发送信号，造成阻塞操作退出。2）阻塞操作退出后，检查信号是不是我们发送的信号，如果不是我们发送的信号，则再次执行原操作。<br>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/08/06/jdk_linux_close/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jdk/">jdk</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
       <a href="/2015/08/06/java_createsocket/" title="自顶向下话socket之create socket" itemprop="url">自顶向下话socket之create socket</a>
   </h1>
   <p class="article-author">By
@@ -93,48 +155,11 @@
         <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
 <p>java中的socket编程比c简洁的多，例如简单的一句<code>Socket socket = new Socket(&quot;192.168.1.1&quot;, 8888)</code>就完成了c中好几步操作，接下来，在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。</p>
 <p>下面的JDK源码，为Socket的一种构造函数，从中可以看出，在这个函数中完成了创建socket、bind（server only）、connect（client only)三个操作，在本篇里讨论socket的创建这个操作。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">private</span> <span class="title">Socket</span><span class="params">(SocketAddress address, SocketAddress localAddr,</span><br><span class="line">               <span class="keyword">boolean</span> stream)</span> <span class="keyword">throws</span> IOException </span>&#123;</span><br><span class="line">    setImpl();</span><br><span class="line"></span><br><span class="line">    <span class="comment">// backward compatibility</span></span><br><span class="line">    <span class="keyword">if</span> (address == <span class="keyword">null</span>)</span><br><span class="line">        <span class="keyword">throw</span> <span class="keyword">new</span> NullPointerException();</span><br><span class="line"></span><br><span class="line">    <span class="keyword">try</span> &#123;</span><br><span class="line">        createImpl(stream);</span><br><span class="line">        <span class="keyword">if</span> (localAddr != <span class="keyword">null</span>)</span><br><span class="line">            bind(localAddr);</span><br><span class="line">        <span class="keyword">if</span> (address != <span class="keyword">null</span>)</span><br><span class="line">            connect(address);</span><br><span class="line">    &#125; <span class="keyword">catch</span> (IOException e) &#123;</span><br><span class="line">        close();</span><br><span class="line">        <span class="keyword">throw</span> e;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
-<h2 id="JDK实现">JDK实现</h2><p>在JDK里，创建socket的代码为：<code>AbstractPlainSocketImpl.create</code>方法：<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">fd = <span class="keyword">new</span> FileDescriptor();</span><br><span class="line">socketCreate(<span class="keyword">true</span>);</span><br></pre></td></tr></table></figure></p>
-<p>socketCreate为jni方法，如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> ((fd = JVM_Socket(domain, type, <span class="number">0</span>)) == JVM_IO_ERR) &#123;</span><br><span class="line">    NET_ThrowNew(env, errno, <span class="string">"can't create socket"</span>);</span><br><span class="line">    <span class="keyword">return</span>;</span><br><span class="line">&#125;</span><br><span class="line">......</span><br><span class="line">(*env)-&gt;SetIntField(env, fdObj, IO_fd_fdID, fd);</span><br></pre></td></tr></table></figure></p>
-<p>调用<code>JVM_Socket</code>创建socket，并且将返回的文件描述符，传回java中。<code>JVM_Socket</code>方法调用的是socket系统调用，分析见下文“内核实现”部分。</p>
-<h2 id="linux内核实现">linux内核实现</h2><p>socket系统调用的定义如下：<code>SYSCALL_DEFINE3(socket, int, family, int, type, int, protocol)</code>。</p>
-<ol>
-<li><p>分配一个socket数据结构。<br>首先从内存中分配socket结构体，实际是分配了一个<code>socket_alloc</code>结构，如下：</p>
- <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">struct</span> socket_alloc &#123;</span><br><span class="line">  <span class="keyword">struct</span> socket socket;</span><br><span class="line">  <span class="keyword">struct</span> inode vfs_inode;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
-<p>入口为:<code>sock_alloc</code>方法，在其中调用fs子系统的<code>new_inode_pseudo</code>方法，在其中调用了super operations的方法，最终调用的为<code>sock_alloc_inode</code>。在这个方法中，分配了一个<code>socket_alloc</code>结构。这个结构分配在了SLAB中，SLAB cache的名称为“sock_inode_cache”，通过cat /proc/slabinfo | grep sock_inode_cache可以看出一个<strong>对象的大小为640字节</strong>。<code>sock_alloc_inode</code>方法关键部分如下：</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">struct</span> socket_alloc *ei;</span><br><span class="line"><span class="keyword">struct</span> socket_wq *wq;</span><br><span class="line">  </span><br><span class="line">ei = kmem_cache_alloc(sock_inode_cachep, GFP_KERNEL);</span><br><span class="line"><span class="keyword">if</span> (!ei)</span><br><span class="line">    <span class="keyword">return</span> NULL;</span><br><span class="line">wq = kmalloc(<span class="keyword">sizeof</span>(*wq), GFP_KERNEL);</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>socket初始化数据<br>通过系统调用参数里的family参数，调用相应协议族的create方法，进行初始化，在这里即调用<code>inet_create</code>, 主要操作包括：</p>
-<ol>
-<li>通过type和protocol找到对应的inet_protosw。</li>
-<li>将inet_protosw中的ops，赋值给socket的ops： <code>sock-&gt;ops = answer-&gt;ops</code>。</li>
-<li><p>新建socket的<code>sock     *sk</code>，入口函数为<code>struct sock *sk_alloc(struct net *net, int family, gfp_t priority,  struct proto *prot)</code>。<br>内存分配在prot中的slab里，对于TCP协议来说，为tcp_sock，分配在tcp协议的slab cache（名称为TCP)里，一个<strong>对象大小为1856</strong>。（<code>sk_prot_alloc</code>）。<br>给sock属性赋值，需要注意的几个值如下：</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">sk-&gt;sk_family = family;</span><br><span class="line">sk-&gt;sk_prot = sk-&gt;sk_prot_creator = prot;</span><br><span class="line">sk-&gt;sk_rcvbuf       =   sysctl_rmem_default; <span class="comment">//即/proc/sys/net/core/rmem_default的值</span></span><br><span class="line">sk-&gt;sk_sndbuf       =   sysctl_wmem_default;<span class="comment">//即proc/sys/net/core/wmem_default的值。</span></span><br></pre></td></tr></table></figure>
-<p>使用prot的init方法给sock复制，<code>sk-&gt;sk_prot-&gt;init(sk)</code>，对于tcp来说，就是调用<code>tcp_v4_init_sock</code>方法。在这里面将进行了覆盖。</p>
-<figure class="highlight nimrod"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">sk-&gt;sk_sndbuf = sysctl_tcp_wmem[<span class="number">1</span>]; //即/<span class="keyword">proc</span>/sys/net/ipv4/tcp_wmem</span><br><span class="line">sk-&gt;sk_rcvbuf = sysctl_tcp_rmem[<span class="number">1</span>]; //即/<span class="keyword">proc</span>/sys/net/ipv4/tcp_rmem</span><br></pre></td></tr></table></figure>
-</li>
-</ol>
-</li>
-<li><p>为了使socket可以像文件一样操作，需要分配一个文件描述符，以及一个file结构，就像打开一个新文件一样，这部分操作的入口在<code>sock_map_fd</code>，由于这里面调用的几个方法是vfs子系统的方法，所以在这里就不再展开描述，以后有机会在别的文章再展开，这里只是需要强调，既然是打开文件，所以一定受<strong>打开文件的限制</strong>，影响打开文件的因素请参考<a href="http://jangzq.info/2015/08/06/linux-file-limit/">深入分析linux打开文件数限制</a></p>
-<ol>
-<li><p>首先，调用<code>get_unused_fd_flags</code>，得到一个未使用的文件描述符。</p>
-<figure class="highlight lisp"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">int fd = get_unused_fd_flags<span class="list">(<span class="keyword">flags</span>)</span><span class="comment">;</span></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>在<code>sock_alloc_file</code>中，首先分配一个dentry，即目录项，在VFS里，每一个文件必须有一个目录项，连接在一起构成了路径的树状关系。既然socket当作文件，所以也需要有目录项，所以调用<code>d_alloc_pseudo</code>进行分配,分配完成后使用<code>d_instantiate(path.dentry, SOCK_INODE(sock))</code>将dentry和上一步中分配的inode联系起来。</p>
-</li>
-<li><p>分配和初始化<code>struct file</code>，得到file指针后，通过<code>sock-&gt;file = file</code>和<code>file-&gt;private_data = sock</code>将文件和socket关联起来。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">file = alloc_file(&amp;path, FMODE_READ | FMODE_WRITE,</span><br><span class="line">      &amp;socket_file_ops);</span><br><span class="line"><span class="keyword">if</span> (unlikely(IS_ERR(file))) &#123;</span><br><span class="line">    <span class="comment">/* drop dentry, keep inode */</span></span><br><span class="line">    ihold(path.dentry-&gt;d_inode);</span><br><span class="line">    path_put(&amp;path);</span><br><span class="line">    <span class="keyword">return</span> file;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>这里需要注意的是，在调用alloc_file时传入的socket_file_ops参数，指出了文件操作对应的socket方法，如下：</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">struct</span> file_operations socket_file_ops = &#123;</span><br><span class="line">    .owner =    THIS_MODULE,</span><br><span class="line">    .llseek =   no_llseek,</span><br><span class="line">    .aio_read = sock_aio_read,</span><br><span class="line">    .aio_write =    sock_aio_write,</span><br><span class="line">    .poll =     sock_poll,</span><br><span class="line">    .unlocked_ioctl = sock_ioctl,</span><br><span class="line"><span class="preprocessor">#ifdef CONFIG_COMPAT</span></span><br><span class="line">    .compat_ioctl = compat_sock_ioctl,</span><br><span class="line"><span class="preprocessor">#<span class="keyword">endif</span></span></span><br><span class="line">    .mmap =     sock_mmap,</span><br><span class="line">    .release =  sock_close,</span><br><span class="line">    .fasync =   sock_fasync,</span><br><span class="line">    .sendpage = sock_sendpage,</span><br><span class="line">    .splice_write = generic_splice_sendpage,</span><br><span class="line">    .splice_read =  sock_splice_read,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>最后，将文件描述符和file结构体管理起来：<code>fd_install(fd, newfile)</code>。<br>至此socket系统调用完毕。</p>
-</li>
-</ol>
-</li>
-</ol>
-
         
         
         <p class="article-more-link">
+          
+            <a href="/2015/08/06/java_createsocket/#more">Read More</a>
           
        </p>
     </div>
@@ -666,75 +691,6 @@
 
 
 
-   
-    
-    <article class="post-expand post" itemprop="articleBody"> 
-        <header class="article-info clearfix">
-  <h1 itemprop="name">
-    
-      <a href="/2015/07/26/GenCollectedHeap_allocate/" title="分代内存管理之慢速路径内存分配" itemprop="url">分代内存管理之慢速路径内存分配</a>
-  </h1>
-  <p class="article-author">By
-       
-		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
-		
-  <p class="article-time">
-    <time datetime="2015-07-26T03:45:47.000Z" itemprop="datePublished"> 发表于 2015-07-26</time>
-    
-  </p>
-</header>
-    <div class="article-content">
-        
-        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>分代的内存管理使用GenCollectedHeap。generation的类如下：</p>
-<p><img src="/images/generation.png" alt="Generation"></p>
-<p>在这里我们主要剖析慢速路径使用的GenCollectedHeap::mem_allocate方法。其内存分配委托给了相应的CollectorPolicy实现。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">return</span> collector_policy()-&gt;mem_allocate_work(size,</span><br><span class="line">                                             <span class="keyword">false</span> <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                                             gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure>
-<p>所以，下面剖析GenCollectorPolicy::mem_allocate_work的实现。</p>
-<ul>
-<li><p>内存分配的逻辑在下列循环中，说明此方法只有两个出口，或者分配成功，或者抛出异常。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> try_count = <span class="number">1</span>; <span class="comment">/* return or throw */</span>; try_count += <span class="number">1</span>) </span><br><span class="line">&#123;</span><br><span class="line">	....</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>分代的内存管理，在Young generation里实现无锁的分配方式，从assert中可以看出，Young generation必须满足<code>supports_inline_contig_alloc</code>，即必须满足，在堆中必须有一块儿连续的空间，可用范围由top_addr()，end_addr()决定的，并且可以靠移动top_addr来分配内存。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">assert(gen0-&gt;supports_inline_contig_alloc(),</span><br><span class="line">      <span class="string">"Otherwise, must do alloc within heap lock"</span>);</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>接下来，在Young generation进行无锁分配。</p>
-        
-        
-        <p class="article-more-link">
-          
-            <a href="/2015/07/26/GenCollectedHeap_allocate/#more">Read More</a>
-          
-       </p>
-    </div>
-    <footer class="article-footer clearfix">
-<div class="article-catetags">
-
-
-  <div class="article-tags">
-  
-  <span></span> <a href="/tags/jvm/">jvm</a>
-  </div>
-
-</div>
-
-
-
-
-<div class="comments-count">
-	
-</div>
-
-</footer>
-
-
-    </article>
-
-
-
-
-
-
 
   <nav id="page-nav" class="clearfix">
     <span class="page-number current">1</span><a class="page-number" href="/page/2/">2</a><a class="extend next" rel="next" href="/page/2/">Next<span></span></a>
@@ -763,7 +719,7 @@
 			
 		
 			
-				<li><a href="/tags/jdk/" title="jdk">jdk<sup>1</sup></a></li>
+				<li><a href="/tags/jdk/" title="jdk">jdk<sup>2</sup></a></li>
 			
 		
 		</ul>

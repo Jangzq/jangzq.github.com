@@ -19,7 +19,7 @@ java中的socket编程比c简洁的多，例如简单的一句Socket socket = ne
 <meta property="og:site_name" content="Jangzq技术研究">
 <meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
 java中的socket编程比c简洁的多，例如简单的一句Socket socket = new Socket(&amp;quot;192.168.1.1&amp;quot;, 8888)就完成了c中好几步操作，接下来，在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源">
-<meta property="og:updated_time" content="2015-08-06T13:15:29.000Z">
+<meta property="og:updated_time" content="2015-08-06T13:19:18.000Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="自顶向下话socket之create socket">
 <meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
@@ -102,6 +102,7 @@ java中的socket编程比c简洁的多，例如简单的一句Socket socket = ne
 		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
 <p>java中的socket编程比c简洁的多，例如简单的一句<code>Socket socket = new Socket(&quot;192.168.1.1&quot;, 8888)</code>就完成了c中好几步操作，接下来，在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。</p>
 <p>下面的JDK源码，为Socket的一种构造函数，从中可以看出，在这个函数中完成了创建socket、bind（server only）、connect（client only)三个操作，在本篇里讨论socket的创建这个操作。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">private</span> <span class="title">Socket</span><span class="params">(SocketAddress address, SocketAddress localAddr,</span><br><span class="line">               <span class="keyword">boolean</span> stream)</span> <span class="keyword">throws</span> IOException </span>&#123;</span><br><span class="line">    setImpl();</span><br><span class="line"></span><br><span class="line">    <span class="comment">// backward compatibility</span></span><br><span class="line">    <span class="keyword">if</span> (address == <span class="keyword">null</span>)</span><br><span class="line">        <span class="keyword">throw</span> <span class="keyword">new</span> NullPointerException();</span><br><span class="line"></span><br><span class="line">    <span class="keyword">try</span> &#123;</span><br><span class="line">        createImpl(stream);</span><br><span class="line">        <span class="keyword">if</span> (localAddr != <span class="keyword">null</span>)</span><br><span class="line">            bind(localAddr);</span><br><span class="line">        <span class="keyword">if</span> (address != <span class="keyword">null</span>)</span><br><span class="line">            connect(address);</span><br><span class="line">    &#125; <span class="keyword">catch</span> (IOException e) &#123;</span><br><span class="line">        close();</span><br><span class="line">        <span class="keyword">throw</span> e;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<a id="more"></a>
 <h2 id="JDK实现">JDK实现</h2><p>在JDK里，创建socket的代码为：<code>AbstractPlainSocketImpl.create</code>方法：<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">fd = <span class="keyword">new</span> FileDescriptor();</span><br><span class="line">socketCreate(<span class="keyword">true</span>);</span><br></pre></td></tr></table></figure></p>
 <p>socketCreate为jni方法，如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> ((fd = JVM_Socket(domain, type, <span class="number">0</span>)) == JVM_IO_ERR) &#123;</span><br><span class="line">    NET_ThrowNew(env, errno, <span class="string">"can't create socket"</span>);</span><br><span class="line">    <span class="keyword">return</span>;</span><br><span class="line">&#125;</span><br><span class="line">......</span><br><span class="line">(*env)-&gt;SetIntField(env, fdObj, IO_fd_fdID, fd);</span><br></pre></td></tr></table></figure></p>
 <p>调用<code>JVM_Socket</code>创建socket，并且将返回的文件描述符，传回java中。<code>JVM_Socket</code>方法调用的是socket系统调用，分析见下文“内核实现”部分。</p>
@@ -135,11 +136,12 @@ java中的socket编程比c简洁的多，例如简单的一句Socket socket = ne
 <p>这里需要注意的是，在调用alloc_file时传入的socket_file_ops参数，指出了文件操作对应的socket方法，如下：</p>
 <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">struct</span> file_operations socket_file_ops = &#123;</span><br><span class="line">    .owner =    THIS_MODULE,</span><br><span class="line">    .llseek =   no_llseek,</span><br><span class="line">    .aio_read = sock_aio_read,</span><br><span class="line">    .aio_write =    sock_aio_write,</span><br><span class="line">    .poll =     sock_poll,</span><br><span class="line">    .unlocked_ioctl = sock_ioctl,</span><br><span class="line"><span class="preprocessor">#ifdef CONFIG_COMPAT</span></span><br><span class="line">    .compat_ioctl = compat_sock_ioctl,</span><br><span class="line"><span class="preprocessor">#<span class="keyword">endif</span></span></span><br><span class="line">    .mmap =     sock_mmap,</span><br><span class="line">    .release =  sock_close,</span><br><span class="line">    .fasync =   sock_fasync,</span><br><span class="line">    .sendpage = sock_sendpage,</span><br><span class="line">    .splice_write = generic_splice_sendpage,</span><br><span class="line">    .splice_read =  sock_splice_read,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
 </li>
-<li><p>最后，将文件描述符和file结构体管理起来：<code>fd_install(fd, newfile)</code>。<br>至此socket系统调用完毕。</p>
+<li><p>最后，将文件描述符和file结构体管理起来：<code>fd_install(fd, newfile)</code>。</p>
 </li>
 </ol>
 </li>
 </ol>
+<p>至此socket系统调用完毕。</p>
   
 	</div>
 		<footer class="article-footer clearfix">
@@ -170,6 +172,14 @@ java中的socket编程比c简洁的多，例如简单的一句Socket socket = ne
 	
 <nav class="article-nav clearfix">
  
+ <div class="prev" >
+ <a href="/2015/08/06/jdk_linux_close/" title="自顶向下话socket之blocking io wrapper">
+  <strong>上一篇：</strong><br/>
+  <span>
+  自顶向下话socket之blocking io wrapper</span>
+</a>
+</div>
+
 
 <div class="next">
 <a href="/2015/08/06/linux-file-limit/"  title="深入分析linux打开文件数限制">
@@ -213,7 +223,7 @@ java中的socket编程比c简洁的多，例如简单的一句Socket socket = ne
 			
 		
 			
-				<li><a href="/tags/jdk/" title="jdk">jdk<sup>1</sup></a></li>
+				<li><a href="/tags/jdk/" title="jdk">jdk<sup>2</sup></a></li>
 			
 		
 		</ul>

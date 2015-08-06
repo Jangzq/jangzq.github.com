@@ -77,6 +77,77 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
+      <a href="/2015/07/05/new/" title="通过解释器的new操作看内存分配" itemprop="url">通过解释器的new操作看内存分配</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-04T16:13:29.000Z" itemprop="datePublished"> 发表于 2015-07-05</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
+<p>了解hotspot的内存分配流程，TemplateTable::_new方法是个比较好的入口，这个方法生成了供以后解释执行时使用的汇编代码。从这个方法入手，可以了解hotspot创建对象所需要的操作，对我们开发应用程序时，进行内存管理设计有很大的帮助。</p>
+<h2 id="概述">概述</h2><p>新建一个对象，有三种方式。</p>
+<ol>
+<li><p>在TLAB中分配<br>如果<code>UseTLAB</code>为真（缺省是true），就先进行TLAB分配，本部分的内容在<a href="http://jangzq.info/2015/06/28/tlab/">《HotSpot的TLAB实现解析》</a>一文里也进行了简单的说明，本文后面详细说明。</p>
+</li>
+<li><p>在shared eden中快速分配。<br>TLAB是eden中的每个线程自己使用的部分，shared eden就是共享的部分。当在TLAB中分配失败后，也就是TLAB中的内存大小不够时，就有可能在shared eden中分配。之所以是有可能，是需要满足以下的条件。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> <span class="keyword">bool</span> allow_shared_alloc =</span><br><span class="line">   Universe::heap()-&gt;supports_inline_contig_alloc() &amp;&amp; !CMSIncrementalMode</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p><code>supports_inline_contig_alloc</code>与具体的<code>CollectedHeap</code>有关，也就是必须满足，在堆中必须有一块儿连续的空间，可用范围由<code>top_addr()</code>，<code>end_addr()</code>决定的，并且可以靠移动<code>top_addr</code>来分配内存。<br><code>CMSIncrementalMode</code>是增量CMS模式，当设置了增量CMS模式时，不允许在share eden中快速分配。</p>
+<ol>
+<li>慢速路径<br>调用<code>InterpreterRuntime::_new</code>进行分配。当类没有解析或者初始化时，还有上面的两种分配方式都不成功的时候，进入慢速模式。</li>
+</ol>
+<h2 id="源码解析">源码解析</h2>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/07/05/new/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
       <a href="/2015/07/03/CollectedHeapCollectorPolicy/" title="垃圾收集框架：CollectedHeap和CollectorPolicy" itemprop="url">垃圾收集框架：CollectedHeap和CollectorPolicy</a>
   </h1>
   <p class="article-author">By
@@ -354,7 +425,11 @@
 			
 		
 			
-				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>3</sup></a></li>
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>4</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/jdk/" title="jdk">jdk<sup>1</sup></a></li>
 			
 		
 		</ul>

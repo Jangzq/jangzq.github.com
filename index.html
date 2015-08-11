@@ -77,6 +77,122 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
+      <a href="/2015/08/11/connect_timeout/" title="自顶向下话socket之connect超时" itemprop="url">自顶向下话socket之connect超时</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-08-11T12:28:23.000Z" itemprop="datePublished"> 发表于 2015-08-11</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。<br>不做特殊说明，全部指linux平台。<br>当不设置超时，connect操作多久超时，实验如下：<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">long</span> beginTime = System.currentTimeMillis();</span><br><span class="line"><span class="keyword">try</span> &#123;</span><br><span class="line">	Socket s = <span class="keyword">new</span> Socket(<span class="string">"192.168.1.132"</span>, <span class="number">1666</span>);</span><br><span class="line">	s.close();</span><br><span class="line">&#125; <span class="keyword">catch</span> (Exception e) &#123;</span><br><span class="line">	e.printStackTrace();</span><br><span class="line">&#125;</span><br><span class="line">System.out.println(System.currentTimeMillis()-beginTime);</span><br></pre></td></tr></table></figure></p>
+<p>输出为：127202，即127秒，这个值怎么来的，我们深入源码一探究竟。<br>在<code>tcp_connect</code>中，发送syn后，调用<code>inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS,  inet_csk(sk)-&gt;icsk_rto, TCP_RTO_MAX)</code>重置或者重启“重传timer”，这个函数相关部分如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">inline</span> <span class="keyword">void</span> <span class="title">inet_csk_reset_xmit_timer</span><span class="params">(<span class="keyword">struct</span> sock *sk, <span class="keyword">const</span> <span class="keyword">int</span> what,</span><br><span class="line">                         <span class="keyword">unsigned</span> <span class="keyword">long</span> when,</span><br><span class="line">                         <span class="keyword">const</span> <span class="keyword">unsigned</span> <span class="keyword">long</span> max_when)</span></span><br><span class="line"></span>&#123;</span><br><span class="line">     ......</span><br><span class="line">    <span class="keyword">if</span> (what == ICSK_TIME_RETRANS || what == ICSK_TIME_PROBE0 ||</span><br><span class="line">        what == ICSK_TIME_EARLY_RETRANS || what ==  ICSK_TIME_LOSS_PROBE) &#123;</span><br><span class="line">        icsk-&gt;icsk_pending = what;</span><br><span class="line">        icsk-&gt;<span class="keyword">icsk_t</span>imeout = jiffies + when;</span><br><span class="line">        <span class="keyword">sk_reset_t</span>imer(sk, &amp;icsk-&gt;<span class="keyword">icsk_retransmit_t</span>imer, icsk-&gt;<span class="keyword">icsk_t</span>imeout);</span><br><span class="line">    &#125;</span><br><span class="line">     ......</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>从代码中可以看出，重置icsk_retransmit_timer的超时时间，如果没有启动，则启动，超时时间为<code>inet_csk(sk)-&gt;icsk_rto</code>，这个值的初始值在初始化socket时设置的，初始值为<code>icsk-&gt;icsk_rto = TCP_TIMEOUT_INIT;</code>，TCP_TIMEOUT_INIT的定义为：<code>#define TCP_TIMEOUT_INIT ((unsigned)(1*HZ))</code>,HZ是1秒的节拍数，1HZ在时间上来说，就是1秒。也就是最初是1秒种超时，调用timer的回调函数<code>tcp_retransmit_timer</code>，在这个函数里，首先重发了syn包，然后判断整个操作是否超时了（下文详细描述），如果没有超时，然后重新计算下一次等待超时时间，并且重启定时器，超时时间的计算规则为：<code>icsk-&gt;icsk_rto = min(icsk-&gt;icsk_rto &lt;&lt; 1, TCP_RTO_MAX)</code>即上次的超时时间*2，最大为TCP_RTO_MAX（120秒）。<br>从上面可以看出关键是判断整个操作是否超时，计算整个操作超时时间的逻辑在函数<code>retransmits_timed_out</code>里（程序如下），在这里boundary即重试次数，当boundary小于ilog2(TCP_RTO_MAX/rto_base)时，超时次数为一个指数关系，当大于的时候，ilog2(TCP_RTO_MAX/rto_base)之下的为指数增长，之上为线性增长，重试次数由系统参数：/proc/sys/net/ipv4/tcp_syn_retries确定，缺省为6,带入公式计算， 得到的正是127。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">linear_backoff_t</span>hresh = ilog2(TCP_RTO_MAX/rto_base);</span><br><span class="line"></span><br><span class="line">       <span class="keyword">if</span> (boundary &lt;= <span class="keyword">linear_backoff_t</span>hresh)</span><br><span class="line">           timeout = ((<span class="number">2</span> &lt;&lt; boundary) - <span class="number">1</span>) * rto_base;</span><br><span class="line">       <span class="keyword">else</span></span><br><span class="line">           timeout = ((<span class="number">2</span> &lt;&lt; <span class="keyword">linear_backoff_t</span>hresh) - <span class="number">1</span>) * rto_base +</span><br><span class="line">               (boundary - <span class="keyword">linear_backoff_t</span>hresh) * TCP_RTO_MAX;</span><br></pre></td></tr></table></figure></p>
+
+        
+        
+        <p class="article-more-link">
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/linux内核/">linux内核</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/08/06/java_connect/" title="自顶向下话socket之connect" itemprop="url">自顶向下话socket之connect</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-08-06T15:51:01.000Z" itemprop="datePublished"> 发表于 2015-08-06</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。<br>在本篇里讨论socket的connect这个操作。<br>当java程序，进行socket connect时，调用方法为<code>PlainSocketImpl</code>中的native方法<code>native void socketConnect(InetAddress address, int port, int timeout) throws IOException</code>。</p>
+<h2 id="JDK实现">JDK实现</h2><p>jdk的connect操作，先是调用connect系统调用，然后根据错误码抛出异常，并且设置java类的参数。需要注意的是，在linux版本的jdk中，根据是否设置了超时参数，调用connect方式不同，见<code>Java_java_net_PlainSocketImpl_socketConnect</code><br>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/08/06/java_connect/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jdk/">jdk</a><a href="/tags/linux内核/">linux内核</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
       <a href="/2015/08/06/jdk_linux_close/" title="自顶向下话socket之blocking io wrapper" itemprop="url">自顶向下话socket之blocking io wrapper</a>
   </h1>
   <p class="article-author">By
@@ -561,136 +677,6 @@
 
 
 
-   
-    
-    <article class="post-expand post" itemprop="articleBody"> 
-        <header class="article-info clearfix">
-  <h1 itemprop="name">
-    
-      <a href="/2015/07/28/GenCollectedHeap_meminit/" title="分代内存管理之内存初始化" itemprop="url">分代内存管理之内存初始化</a>
-  </h1>
-  <p class="article-author">By
-       
-		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
-		
-  <p class="article-time">
-    <time datetime="2015-07-28T13:30:58.000Z" itemprop="datePublished"> 发表于 2015-07-28</time>
-    
-  </p>
-</header>
-    <div class="article-content">
-        
-        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>分代内存管理的内存初始化入口在：GenCollectedHeap::initialize。</p>
-<h2 id="整体分配内存">整体分配内存</h2><p>在GenCollectedHeap::allocate方法中。在此之前，初始化CollectorPolicy时，已经计算了各个Generation的最大、最小、初始值，并且初始化了GenerationSpec数组。计算大小的过程见：<a href="http://jangzq.info/2015/07/27/GenCollectedHeap_size/">分代内存管理之Generation Size</a><br><strong>注:</strong> 由于UseSharedSpaces只适用于Client mode，所以在此不分析相关代码。<br><strong>注：</strong> 这部分所说的分配内存，并不是真正的分配物理内存，而是在地址空间分配一段内存地址空间，在linux下使用mmap的匿名映射实现，当访问其中的某一地址时，产生缺页中断，由操作系统分配真实物理内存。</p>
-<ul>
-<li><p>计算需要的内存大小。</p>
-<ol>
-<li><p>遍历各个Generation Spec，将其最大内存相加。</p>
- <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"></span><br><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; _n_gens; i++) &#123;</span><br><span class="line">  total_reserved = add_and_check_overflow(total_reserved, _gen_specs[i]-&gt;max_size());</span><br><span class="line">  n_covered_regions += _gen_specs[i]-&gt;n_covered_regions();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>再加上Perm区域的最大内存，及misc_data_size()、misc_code_size()<br>misc_data_size()、misc_code_size()并包含在heap内，只是在这里一起分配。</p>
- <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">total_reserved = add_and_check_overflow(total_reserved, perm_gen_spec-&gt;max_size());</span><br><span class="line"><span class="keyword">size_t</span> misc = perm_gen_spec-&gt;misc_data_size() + perm_gen_spec-&gt;misc_code_size();</span><br><span class="line">total_reserved = add_and_check_overflow(total_reserved, misc);</span><br></pre></td></tr></table></figure>
-</li>
-</ol>
-</li>
-</ul>
-        
-        
-        <p class="article-more-link">
-          
-            <a href="/2015/07/28/GenCollectedHeap_meminit/#more">Read More</a>
-          
-       </p>
-    </div>
-    <footer class="article-footer clearfix">
-<div class="article-catetags">
-
-
-  <div class="article-tags">
-  
-  <span></span> <a href="/tags/jvm/">jvm</a>
-  </div>
-
-</div>
-
-
-
-
-<div class="comments-count">
-	
-</div>
-
-</footer>
-
-
-    </article>
-
-
-
-
-
-
-   
-    
-    <article class="post-expand post" itemprop="articleBody"> 
-        <header class="article-info clearfix">
-  <h1 itemprop="name">
-    
-      <a href="/2015/07/27/GenCollectedHeap_size/" title="分代内存管理之Generation Size" itemprop="url">分代内存管理之Generation Size</a>
-  </h1>
-  <p class="article-author">By
-       
-		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
-		
-  <p class="article-time">
-    <time datetime="2015-07-27T14:04:41.000Z" itemprop="datePublished"> 发表于 2015-07-27</time>
-    
-  </p>
-</header>
-    <div class="article-content">
-        
-        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>分代内存管理中各个generation的内存大小设置，保存在CollectorPolicy及其子类里，如下图所示。<br><img src="/images/gen_size.png" alt="CollectorPolicy"><br>从图中可以看出，CollectorPolicy类管理heap的大小，GenCollectorPolicy类管理着Generation 0的大小，而TwoGenerationCollectorPolicy管理着Generation 1的大小。</p>
-<h2 id="Heap大小">Heap大小</h2><p>见：<a href="http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/">垃圾收集框架：CollectedHeap和CollectorPolicy</a></p>
-<h2 id="Generation">Generation</h2><p><strong>Generation大小必须以<code>min_alignment()</code>对齐，一般为64k，并且最小不能小于<code>min_alignment()</code>。为了描述方便，下文有的地方省略对齐及最小值调整部分，请知晓</strong></p>
-<h3 id="Generation_0">Generation 0</h3>
-        
-        
-        <p class="article-more-link">
-          
-            <a href="/2015/07/27/GenCollectedHeap_size/#more">Read More</a>
-          
-       </p>
-    </div>
-    <footer class="article-footer clearfix">
-<div class="article-catetags">
-
-
-  <div class="article-tags">
-  
-  <span></span> <a href="/tags/jvm/">jvm</a>
-  </div>
-
-</div>
-
-
-
-
-<div class="comments-count">
-	
-</div>
-
-</footer>
-
-
-    </article>
-
-
-
-
-
-
 
   <nav id="page-nav" class="clearfix">
     <span class="page-number current">1</span><a class="page-number" href="/page/2/">2</a><a class="extend next" rel="next" href="/page/2/">Next<span></span></a>
@@ -715,11 +701,11 @@
 			
 		
 			
-				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>4</sup></a></li>
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>6</sup></a></li>
 			
 		
 			
-				<li><a href="/tags/jdk/" title="jdk">jdk<sup>2</sup></a></li>
+				<li><a href="/tags/jdk/" title="jdk">jdk<sup>3</sup></a></li>
 			
 		
 		</ul>

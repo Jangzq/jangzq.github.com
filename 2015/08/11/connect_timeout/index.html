@@ -4,26 +4,26 @@
 <head>
   <meta charset="UTF-8">
   
-    <title>classpath中没用到的jar的影响 | Jangzq技术研究</title>
+    <title>自顶向下话socket之connect超时 | Jangzq技术研究</title>
     <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
     
     <meta name="author" content="Zhang Zq">
     
 
     
-    <meta name="description" content="有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。1jzfile *  ZIP_Put_In_Cache0(const char *name, ZFILE zfd, char **pmsg, jlong lastModified, jboolean usemmap)
-在这个方法里">
+    <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。不做特殊说明，全部指linux平台。当不设置超时，connect操作多久超时，实验如下：12345678long begi">
 <meta property="og:type" content="article">
-<meta property="og:title" content="classpath中没用到的jar的影响">
-<meta property="og:url" content="http://jangzq.info/2015/07/02/classpath_jar/index.html">
+<meta property="og:title" content="自顶向下话socket之connect超时">
+<meta property="og:url" content="http://jangzq.info/2015/08/11/connect_timeout/index.html">
 <meta property="og:site_name" content="Jangzq技术研究">
-<meta property="og:description" content="有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。1jzfile *  ZIP_Put_In_Cache0(const char *name, ZFILE zfd, char **pmsg, jlong lastModified, jboolean usemmap)
-在这个方法里">
-<meta property="og:updated_time" content="2015-07-02T13:28:07.000Z">
+<meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。不做特殊说明，全部指linux平台。当不设置超时，connect操作多久超时，实验如下：12345678long begi">
+<meta property="og:updated_time" content="2015-08-11T12:33:25.000Z">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="classpath中没用到的jar的影响">
-<meta name="twitter:description" content="有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。1jzfile *  ZIP_Put_In_Cache0(const char *name, ZFILE zfd, char **pmsg, jlong lastModified, jboolean usemmap)
-在这个方法里">
+<meta name="twitter:title" content="自顶向下话socket之connect超时">
+<meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。不做特殊说明，全部指linux平台。当不设置超时，connect操作多久超时，实验如下：12345678long begi">
 
     
     <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
@@ -79,14 +79,14 @@
 		<header class="article-info clearfix">
   <h1 itemprop="name">
     
-      <a href="/2015/07/02/classpath_jar/" title="classpath中没用到的jar的影响" itemprop="url">classpath中没用到的jar的影响</a>
+      <a href="/2015/08/11/connect_timeout/" title="自顶向下话socket之connect超时" itemprop="url">自顶向下话socket之connect超时</a>
   </h1>
   <p class="article-author">By
        
 		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
 		
   <p class="article-time">
-    <time datetime="2015-07-02T13:19:16.000Z" itemprop="datePublished"> 发表于 2015-07-02</time>
+    <time datetime="2015-08-11T12:28:23.000Z" itemprop="datePublished"> 发表于 2015-08-11</time>
     
   </p>
 </header>
@@ -99,17 +99,10 @@
 		
 		</div>
 		
-		<p>有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。<br>通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">jzfile *  ZIP_Put_In_Cache0(<span class="keyword">const</span> <span class="keyword">char</span> *name, ZFILE zfd, <span class="keyword">char</span> **pmsg, jlong lastModified, jboolean usemmap)</span><br></pre></td></tr></table></figure></p>
-<p>在这个方法里，调用<code>static jlong readCEN(jzfile *zip, jint knownTotal)</code>方法“读取”了zip的central directory部分，里面关键的一句为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">mappedAddr = mmap64(<span class="number">0</span>, zip-&gt;mlen, PROT_READ, MAP_SHARED, zip-&gt;zfd, (<span class="keyword">off64_t</span>) offset)</span><br></pre></td></tr></table></figure></p>
-<p>即：将zip的 central directory部分进行了文件映射。上文中“读取”两字，我加了引号，就是因为并不是真正的读取了这块儿内容，而是采用文件映射的方式，将文件的这部分内容映射进了内存空间。这个方法里有一处值得我们注意，即是用了MAP_SHARED参数，即这一块儿空间是和其他进程共享的。<br>在JDK6之前，map了这个jar文件，这样占用了大量的地址空间（并没有占用内存），所以改为只映射 central directory，因为 central directory中包含检索包含文件的全部信息。<br>通过pmap，我们可以看到内存映射：</p>
-<blockquote>
-<p>00007f7bb818a000  63960K ——-   [ anon ]<br>00007f7bbc00a000      8K r—s- axis-ant-1.2.1.jar<br>00007f7bbc00c000      8K r—s- asm-attrs.jar<br>00007f7bbc00e000     20K r—s- antlr-2.7.6rc1.jar<br>00007f7bbc013000     28K r—s- ant-1.4.1.jar<br>00007f7bbc01a000     52K r—s- acegi-security-1.0.7.jar<br>00007f7bbc027000     44K r—s- charsets.jar<br>00007f7bbc032000   5968K rw—-   [ anon ]<br>00007f7bbc606000   1788K r—s- rt.jar<br>00007f7bbc7c5000   5264K rw—-   [ anon ]</p>
-</blockquote>
-<p>通过上述分析，我们可以得到如下结论：</p>
-<ul>
-<li>classpath包含的jar，会把 central directory映射到内存中去，在load class时会进行访问，所以会占用内存。如果jar文件较多，而且比较大，也会占用不少空间。</li>
-<li>对于一台主机上的不同java进程，引用相同的jar，最好使用同一个文件，这样会共享同一块内存，减少内存占用。</li>
-</ul>
+		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。<br>不做特殊说明，全部指linux平台。<br>当不设置超时，connect操作多久超时，实验如下：<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">long</span> beginTime = System.currentTimeMillis();</span><br><span class="line"><span class="keyword">try</span> &#123;</span><br><span class="line">	Socket s = <span class="keyword">new</span> Socket(<span class="string">"192.168.1.132"</span>, <span class="number">1666</span>);</span><br><span class="line">	s.close();</span><br><span class="line">&#125; <span class="keyword">catch</span> (Exception e) &#123;</span><br><span class="line">	e.printStackTrace();</span><br><span class="line">&#125;</span><br><span class="line">System.out.println(System.currentTimeMillis()-beginTime);</span><br></pre></td></tr></table></figure></p>
+<p>输出为：127202，即127秒，这个值怎么来的，我们深入源码一探究竟。<br>在<code>tcp_connect</code>中，发送syn后，调用<code>inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS,  inet_csk(sk)-&gt;icsk_rto, TCP_RTO_MAX)</code>重置或者重启“重传timer”，这个函数相关部分如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">inline</span> <span class="keyword">void</span> <span class="title">inet_csk_reset_xmit_timer</span><span class="params">(<span class="keyword">struct</span> sock *sk, <span class="keyword">const</span> <span class="keyword">int</span> what,</span><br><span class="line">                         <span class="keyword">unsigned</span> <span class="keyword">long</span> when,</span><br><span class="line">                         <span class="keyword">const</span> <span class="keyword">unsigned</span> <span class="keyword">long</span> max_when)</span></span><br><span class="line"></span>&#123;</span><br><span class="line">     ......</span><br><span class="line">    <span class="keyword">if</span> (what == ICSK_TIME_RETRANS || what == ICSK_TIME_PROBE0 ||</span><br><span class="line">        what == ICSK_TIME_EARLY_RETRANS || what ==  ICSK_TIME_LOSS_PROBE) &#123;</span><br><span class="line">        icsk-&gt;icsk_pending = what;</span><br><span class="line">        icsk-&gt;<span class="keyword">icsk_t</span>imeout = jiffies + when;</span><br><span class="line">        <span class="keyword">sk_reset_t</span>imer(sk, &amp;icsk-&gt;<span class="keyword">icsk_retransmit_t</span>imer, icsk-&gt;<span class="keyword">icsk_t</span>imeout);</span><br><span class="line">    &#125;</span><br><span class="line">     ......</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>从代码中可以看出，重置icsk_retransmit_timer的超时时间，如果没有启动，则启动，超时时间为<code>inet_csk(sk)-&gt;icsk_rto</code>，这个值的初始值在初始化socket时设置的，初始值为<code>icsk-&gt;icsk_rto = TCP_TIMEOUT_INIT;</code>，TCP_TIMEOUT_INIT的定义为：<code>#define TCP_TIMEOUT_INIT ((unsigned)(1*HZ))</code>,HZ是1秒的节拍数，1HZ在时间上来说，就是1秒。也就是最初是1秒种超时，调用timer的回调函数<code>tcp_retransmit_timer</code>，在这个函数里，首先重发了syn包，然后判断整个操作是否超时了（下文详细描述），如果没有超时，然后重新计算下一次等待超时时间，并且重启定时器，超时时间的计算规则为：<code>icsk-&gt;icsk_rto = min(icsk-&gt;icsk_rto &lt;&lt; 1, TCP_RTO_MAX)</code>即上次的超时时间*2，最大为TCP_RTO_MAX（120秒）。<br>从上面可以看出关键是判断整个操作是否超时，计算整个操作超时时间的逻辑在函数<code>retransmits_timed_out</code>里（程序如下），在这里boundary即重试次数，当boundary小于ilog2(TCP_RTO_MAX/rto_base)时，超时次数为一个指数关系，当大于的时候，ilog2(TCP_RTO_MAX/rto_base)之下的为指数增长，之上为线性增长，重试次数由系统参数：/proc/sys/net/ipv4/tcp_syn_retries确定，缺省为6,带入公式计算， 得到的正是127。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">linear_backoff_t</span>hresh = ilog2(TCP_RTO_MAX/rto_base);</span><br><span class="line"></span><br><span class="line">       <span class="keyword">if</span> (boundary &lt;= <span class="keyword">linear_backoff_t</span>hresh)</span><br><span class="line">           timeout = ((<span class="number">2</span> &lt;&lt; boundary) - <span class="number">1</span>) * rto_base;</span><br><span class="line">       <span class="keyword">else</span></span><br><span class="line">           timeout = ((<span class="number">2</span> &lt;&lt; <span class="keyword">linear_backoff_t</span>hresh) - <span class="number">1</span>) * rto_base +</span><br><span class="line">               (boundary - <span class="keyword">linear_backoff_t</span>hresh) * TCP_RTO_MAX;</span><br></pre></td></tr></table></figure></p>
   
 	</div>
 		<footer class="article-footer clearfix">
@@ -118,7 +111,7 @@
 
   <div class="article-tags">
   
-  <span></span> <a href="/tags/jvm/">jvm</a>
+  <span></span> <a href="/tags/linux内核/">linux内核</a>
   </div>
 
 </div>
@@ -127,7 +120,7 @@
 
 	<div class="article-share" id="share">
 	
-	  <div data-url="http://jangzq.info/2015/07/02/classpath_jar/" data-title="classpath中没用到的jar的影响 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  <div data-url="http://jangzq.info/2015/08/11/connect_timeout/" data-title="自顶向下话socket之connect超时 | Jangzq技术研究" data-tsina="null" class="share clearfix">
 	  </div>
 	
 	</div>
@@ -140,19 +133,11 @@
 	
 <nav class="article-nav clearfix">
  
- <div class="prev" >
- <a href="/2015/07/03/CollectedHeapCollectorPolicy/" title="垃圾收集框架：CollectedHeap和CollectorPolicy">
-  <strong>上一篇：</strong><br/>
-  <span>
-  垃圾收集框架：CollectedHeap和CollectorPolicy</span>
-</a>
-</div>
-
 
 <div class="next">
-<a href="/2015/06/28/tlab/"  title="HotSpot的TLAB实现解析">
+<a href="/2015/08/06/java_connect/"  title="自顶向下话socket之connect">
  <strong>下一篇：</strong><br/> 
- <span>HotSpot的TLAB实现解析
+ <span>自顶向下话socket之connect
 </span>
 </a>
 </div>

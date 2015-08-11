@@ -77,6 +77,136 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
+      <a href="/2015/07/28/GenCollectedHeap_meminit/" title="分代内存管理之内存初始化" itemprop="url">分代内存管理之内存初始化</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-28T13:30:58.000Z" itemprop="datePublished"> 发表于 2015-07-28</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>分代内存管理的内存初始化入口在：GenCollectedHeap::initialize。</p>
+<h2 id="整体分配内存">整体分配内存</h2><p>在GenCollectedHeap::allocate方法中。在此之前，初始化CollectorPolicy时，已经计算了各个Generation的最大、最小、初始值，并且初始化了GenerationSpec数组。计算大小的过程见：<a href="http://jangzq.info/2015/07/27/GenCollectedHeap_size/">分代内存管理之Generation Size</a><br><strong>注:</strong> 由于UseSharedSpaces只适用于Client mode，所以在此不分析相关代码。<br><strong>注：</strong> 这部分所说的分配内存，并不是真正的分配物理内存，而是在地址空间分配一段内存地址空间，在linux下使用mmap的匿名映射实现，当访问其中的某一地址时，产生缺页中断，由操作系统分配真实物理内存。</p>
+<ul>
+<li><p>计算需要的内存大小。</p>
+<ol>
+<li><p>遍历各个Generation Spec，将其最大内存相加。</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"></span><br><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; _n_gens; i++) &#123;</span><br><span class="line">  total_reserved = add_and_check_overflow(total_reserved, _gen_specs[i]-&gt;max_size());</span><br><span class="line">  n_covered_regions += _gen_specs[i]-&gt;n_covered_regions();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>再加上Perm区域的最大内存，及misc_data_size()、misc_code_size()<br>misc_data_size()、misc_code_size()并包含在heap内，只是在这里一起分配。</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">total_reserved = add_and_check_overflow(total_reserved, perm_gen_spec-&gt;max_size());</span><br><span class="line"><span class="keyword">size_t</span> misc = perm_gen_spec-&gt;misc_data_size() + perm_gen_spec-&gt;misc_code_size();</span><br><span class="line">total_reserved = add_and_check_overflow(total_reserved, misc);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+</ul>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/07/28/GenCollectedHeap_meminit/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/07/27/GenCollectedHeap_size/" title="分代内存管理之Generation Size" itemprop="url">分代内存管理之Generation Size</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-27T14:04:41.000Z" itemprop="datePublished"> 发表于 2015-07-27</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>分代内存管理中各个generation的内存大小设置，保存在CollectorPolicy及其子类里，如下图所示。<br><img src="/images/gen_size.png" alt="CollectorPolicy"><br>从图中可以看出，CollectorPolicy类管理heap的大小，GenCollectorPolicy类管理着Generation 0的大小，而TwoGenerationCollectorPolicy管理着Generation 1的大小。</p>
+<h2 id="Heap大小">Heap大小</h2><p>见：<a href="http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/">垃圾收集框架：CollectedHeap和CollectorPolicy</a></p>
+<h2 id="Generation">Generation</h2><p><strong>Generation大小必须以<code>min_alignment()</code>对齐，一般为64k，并且最小不能小于<code>min_alignment()</code>。为了描述方便，下文有的地方省略对齐及最小值调整部分，请知晓</strong></p>
+<h3 id="Generation_0">Generation 0</h3>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/07/27/GenCollectedHeap_size/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
       <a href="/2015/07/26/GenCollectedHeap_allocate/" title="分代内存管理之慢速路径内存分配" itemprop="url">分代内存管理之慢速路径内存分配</a>
   </h1>
   <p class="article-author">By
@@ -494,11 +624,11 @@
 			
 		
 			
-				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>4</sup></a></li>
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>6</sup></a></li>
 			
 		
 			
-				<li><a href="/tags/jdk/" title="jdk">jdk<sup>2</sup></a></li>
+				<li><a href="/tags/jdk/" title="jdk">jdk<sup>3</sup></a></li>
 			
 		
 		</ul>

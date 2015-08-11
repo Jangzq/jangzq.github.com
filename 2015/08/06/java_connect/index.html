@@ -1,0 +1,473 @@
+
+ <!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  
+    <title>自顶向下话socket之connect | Jangzq技术研究</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="Zhang Zq">
+    
+
+    
+    <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。在本篇里讨论socket的connect这个操作。当java程序，进行socket connect时，调用方法为Plain">
+<meta property="og:type" content="article">
+<meta property="og:title" content="自顶向下话socket之connect">
+<meta property="og:url" content="http://jangzq.info/2015/08/06/java_connect/index.html">
+<meta property="og:site_name" content="Jangzq技术研究">
+<meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。在本篇里讨论socket的connect这个操作。当java程序，进行socket connect时，调用方法为Plain">
+<meta property="og:updated_time" content="2015-08-11T12:54:49.000Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="自顶向下话socket之connect">
+<meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。在本篇里讨论socket的connect这个操作。当java程序，进行socket connect时，调用方法为Plain">
+
+    
+    <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+</head>
+
+  <body>
+    <header>
+      
+<div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="Jangzq技术研究">Jangzq技术研究</a></h1>
+				<h2 class="blog-motto">关注代码的秘密， 记录探索点滴， 分享技术收获</h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="菜单">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">主页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于我</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="搜索" />
+						<input type="hidden" name="q" value="site:jangzq.info">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+  
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/08/06/java_connect/" title="自顶向下话socket之connect" itemprop="url">自顶向下话socket之connect</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-08-06T15:51:01.000Z" itemprop="datePublished"> 发表于 2015-08-06</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">文章目录</strong>
+		
+			<ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#JDK实现"><span class="toc-number">1.</span> <span class="toc-text">JDK实现</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#linux内核"><span class="toc-number">2.</span> <span class="toc-text">linux内核</span></a></li></ol>
+		
+		</div>
+		
+		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。<br>在本篇里讨论socket的connect这个操作。<br>当java程序，进行socket connect时，调用方法为<code>PlainSocketImpl</code>中的native方法<code>native void socketConnect(InetAddress address, int port, int timeout) throws IOException</code>。</p>
+<h2 id="JDK实现">JDK实现</h2><p>jdk的connect操作，先是调用connect系统调用，然后根据错误码抛出异常，并且设置java类的参数。需要注意的是，在linux版本的jdk中，根据是否设置了超时参数，调用connect方式不同，见<code>Java_java_net_PlainSocketImpl_socketConnect</code><br><a id="more"></a></p>
+<ul>
+<li><p>没有设置超时<br>使用blocking io wrapper里的NET_Connect，保证关闭的时候，不至于退出不了，详情见<a href="http://jangzq.info/2015/08/06/jdk_linux_close/">自顶向下话socket之blocking io wrapper</a>。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">NET_Connect</span><span class="params">(<span class="keyword">int</span> s, <span class="keyword">struct</span> sockaddr *addr, <span class="keyword">int</span> addrlen)</span> </span>&#123;</span><br><span class="line">    BLOCKING_IO_RETURN_INT( s, connect(s, addr, addrlen) );</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>在设置超时的情况下，就是标准的异步建立connect的操作，熟悉linux网络编程的一定不会陌生。</p>
+<ol>
+<li><p>将fd设置为非阻塞状态</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="preprocessor">#<span class="keyword">define</span> SET_NONBLOCKING(fd) &#123;           \</span><br><span class="line">    int flags = fcntl(fd, F_GETFL); \</span><br><span class="line">    flags |= O_NONBLOCK;            \</span><br><span class="line">    fcntl(fd, F_SETFL, flags);      \</span><br><span class="line">&#125;</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>调用connect系统调用，这时不会阻塞，立刻返回，如果返回0,说明连接成功。否则说明发生错误，当errno等于EINPROGRESS时，说明正在进行中，如果错误码不是EINPROGRESS，说明发生真的错误。当正在进行中时，可以使用select或者poll监视文件描述符的写操作，当然，超时需要设置。当poll返回时，如果返回值为0,说明超时了，小于0，如果errno是EINTR,即中断的系统调用，需要修正超时时间后，重复调用poll，否则不是成功，就是失败，可以进行下一步的判断。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">while</span> (<span class="number">1</span>) &#123;</span><br><span class="line">   errno = <span class="number">0</span>;</span><br><span class="line">   connect_rv = NET_Poll(&amp;pfd, <span class="number">1</span>, timeout);</span><br><span class="line">   <span class="keyword">if</span> (connect_rv &gt;= <span class="number">0</span>) &#123;</span><br><span class="line">      <span class="keyword">break</span>;</span><br><span class="line">   &#125;</span><br><span class="line">   <span class="keyword">if</span> (errno != EINTR) &#123;</span><br><span class="line">       <span class="keyword">break</span>;</span><br><span class="line">   &#125;</span><br><span class="line">   <span class="comment">//修正timeout。</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>需要注意的是，poll使用的也是blocking io wrapper里面的方法，这样就保证了close时能退出。</p>
+</li>
+<li>无论如何，都要把fd置回blocking。</li>
+<li>如果上一步poll的返回值为0,说明超时了，返回，但是需要调用<code>JVM_SocketShutdown</code>关闭socket。</li>
+<li>检查SO_ERROR参数是否为0,如果为0,说明成功了，否则失败。</li>
+</ol>
+</li>
+<li><p>如果出错了，根据errno，抛出相应的异常。</p>
+<blockquote>
+<p>Invalid argument or cannot assign requested address<br> operation interrupted<br> Connection refused<br> Connection timed out<br> Host unreachable<br> Address not available<br> Socket closed<br> connect failed</p>
+</blockquote>
+</li>
+<li><p>如果成功了, 设置Socket类的参数。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line">(*env)-&gt;SetIntField(env, fdObj, IO_fd_fdID, fd);</span><br><span class="line"></span><br><span class="line"><span class="comment">/* set the remote peer address and port */</span></span><br><span class="line">(*env)-&gt;SetObjectField(env, <span class="keyword">this</span>, psi_addressID, iaObj);</span><br><span class="line">(*env)-&gt;SetIntField(env, <span class="keyword">this</span>, psi_portID, port);</span><br><span class="line"><span class="keyword">if</span> (localport == <span class="number">0</span>) &#123;</span><br><span class="line">    <span class="comment">/* Now that we're a connected socket, let's extract the port number</span><br><span class="line">     * that the system chose for us and store it in the Socket object.</span><br><span class="line">     */</span></span><br><span class="line">    len = SOCKADDR_LEN;</span><br><span class="line">    <span class="keyword">if</span> (JVM_GetSockName(fd, (<span class="keyword">struct</span> sockaddr *)&amp;him, &amp;len) == -<span class="number">1</span>) &#123;</span><br><span class="line">        NET_ThrowByNameWithLastError(env, JNU_JAVANETPKG <span class="string">"SocketException"</span>,</span><br><span class="line">                       <span class="string">"Error getting socket name"</span>);</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        localport = NET_GetPortFromSockaddr((<span class="keyword">struct</span> sockaddr *)&amp;him);</span><br><span class="line">        (*env)-&gt;SetIntField(env, <span class="keyword">this</span>, psi_localportID, localport);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ul>
+<h2 id="linux内核">linux内核</h2><p>tcp协议中的connect对应于tcp协议的三次握手过程，由于tcp协议非常复杂，所以不可能详细描述，在这里只涉及一些比较有趣的细节。首先，大致介绍一下内核中的操作。</p>
+<ol>
+<li><p>首先，通过fd找到相应的socket。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">sock = sockfd_lookup_light(fd, &amp;err, &amp;fput_needed);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>调用sock-&gt;ops-&gt;connect方法，即inet_stream_connect方法。</p>
+<ol>
+<li>根据sock-&gt;state做不同的处理，如果是SS_CONNECTED，则将errno设为EISCONN，退出;如果是SS_CONNECTING，则将errno设为EALREADY，然后继续执行下面的程序;如果是SS_UNCONNECTED，则调用<code>sk-&gt;sk_prot-&gt;connect</code>即<code>tcp_v4_connect</code>，在这个方法里，主要是发送SYN，并且启动重传timer，然后将sock-&gt;state设置为SS_CONNECTING，errno设为EINPROGRESS。</li>
+<li><p>判断是否需要等待，在上文“JDK实现”中可以看到，如果设为非阻塞状态则不会等待，在这里得到了证明,见下面的程序，如果是noblock，则超时时间设为0,否则设为socket option SO_SNDTIMEO，这个值缺省值为MAX_SCHEDULE_TIMEOUT，即LONG_MAX，基本不会超时。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">inline</span> <span class="keyword">long</span> <span class="title">sock_sndtimeo</span><span class="params">(<span class="keyword">const</span> <span class="keyword">struct</span> sock *sk, <span class="keyword">bool</span> noblock)</span></span><br><span class="line"></span>&#123;</span><br><span class="line">   <span class="keyword">return</span> noblock ? <span class="number">0</span> : sk-&gt;sk_sndtimeo;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>当前状态是TCPF_SYN_SENT | TCPF_SYN_RECV时，如果超时时间不为0,则进行等待，见方法 <code>inet_wait_for_connect</code>, 退出有三种可能，一种是timeout，一种是有信号需要处理（这也是为什么上面“JDK实现中”收到信号需要重新调用），一种是状态进行了变化，即收到了ack，进入了TCPF_ESTABLISHED状态。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">   <span class="keyword">while</span> ((<span class="number">1</span> &lt;&lt; sk-&gt;sk_state) &amp; (TCPF_SYN_SENT | TCPF_SYN_RECV)) &#123;</span><br><span class="line">    release_sock(sk);</span><br><span class="line">    timeo = <span class="keyword">schedule_t</span>imeout(timeo);</span><br><span class="line">    lock_sock(sk);</span><br><span class="line">    <span class="keyword">if</span> (signal_pending(current) || !timeo)</span><br><span class="line">        <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">prepare_t</span>o_wait(sk_sleep(sk), &amp;wait, TASK_INTERRUPTIBLE);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果上面的等待函数退出，并且返回值不为0（说明不是timeout）,并且没有阻塞的信号（说明不是因为信号退出），则说明是成功连接了，<code>sock-&gt;state = SS_CONNECTED</code>。否则，直接退出。</p>
+</li>
+</ol>
+</li>
+</ol>
+<p>通过上面的描述，一些在“JDK实现”中的用到的方法，在内核层得到了解释。</p>
+<ul>
+<li>为什么收到信号会退出，而还可以继续重新调用。<br><em>提示：sock-&gt;state是SS_CONNECTING的操作</em></li>
+<li>是否可以设置SO_SNDTIMEO，达到超时的目的。<br>可以，但是超时后的errno是EINPROGRESS，可以再次调用connect。</li>
+<li>缺省情况下，connect多长时间超时。<br>请参见本系列的《自顶向下话socket之connect超时》</li>
+</ul>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jdk/">jdk</a><a href="/tags/linux内核/">linux内核</a>
+  </div>
+
+</div>
+
+
+
+	<div class="article-share" id="share">
+	
+	  <div data-url="http://jangzq.info/2015/08/06/java_connect/" data-title="自顶向下话socket之connect | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  </div>
+	
+	</div>
+
+
+</footer>
+
+   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+ <div class="prev" >
+ <a href="/2015/08/11/connect_timeout/" title="自顶向下话socket之connect超时">
+  <strong>上一篇：</strong><br/>
+  <span>
+  自顶向下话socket之connect超时</span>
+</a>
+</div>
+
+
+<div class="next">
+<a href="/2015/08/06/jdk_linux_close/"  title="自顶向下话socket之blocking io wrapper">
+ <strong>下一篇：</strong><br/> 
+ <span>自顶向下话socket之blocking io wrapper
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="显示侧边栏"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">文章目录</strong>
+ 
+ <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#JDK实现"><span class="toc-number">1.</span> <span class="toc-text">JDK实现</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#linux内核"><span class="toc-number">2.</span> <span class="toc-text">linux内核</span></a></li></ol>
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="隐藏侧边栏"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+<div class="tagslist">
+	<p class="asidetitle">标签</p>
+		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>11</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>6</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/jdk/" title="jdk">jdk<sup>3</sup></a></li>
+			
+		
+		</ul>
+</div>
+
+
+  <div class="linkslist">
+  <p class="asidetitle">友情链接</p>
+    <ul>
+        
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS 订阅</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	
+	<section class="info">
+		<p> Jangzq&#39;s blog <br/>
+			Focus on the secret of code!</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		<a href="http://weibo.com/Jangzq" target="_blank" class="icon-weibo" title="微博"></a>
+		
+		
+		<a href="https://github.com/Jangzq" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:zqzhangmail@163.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+			
+		
+
+		<p class="copyright">
+		Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Jacman">Jacman</a> © 2015 
+		
+		<a href="/about" target="_blank" title="Zhang Zq">Zhang Zq</a>
+		
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script src="/js/jquery.imagesloaded.min.js"></script>
+<script src="/js/gallery.js"></script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+  
+        getSize();
+        if (myWidth >= 1024) {
+          c.click();
+        }
+  
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else{
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  c.click(function(){
+    ta.css('display', 'block').addClass('fadeIn');
+  });
+  o.click(function(){
+    ta.css('display', 'none');
+  });
+  $(window).scroll(function(){
+    ta.css("top",Math.max(140,320-$(this).scrollTop()));
+  });
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#nothing"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="微信"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="微博"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+<!-- Analytics Begin -->
+
+
+
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3F435d1985a249fde8415798105b4f848b' type='text/javascript'%3E%3C/script%3E"));
+</script>
+
+
+
+<!-- Analytics End -->
+
+<!-- Totop Begin -->
+
+	<div id="totop">
+	<a title="返回顶部"><img src="/img/scrollup.png"/></a>
+	</div>
+	<script src="/js/totop.js"></script>
+
+<!-- Totop End -->
+
+<!-- MathJax Begin -->
+<!-- mathjax config similar to math.stackexchange -->
+
+
+<!-- MathJax End -->
+
+<!-- Tiny_search Begin -->
+
+<!-- Tiny_search End -->
+
+  </body>
+</html>

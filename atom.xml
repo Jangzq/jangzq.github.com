@@ -5,7 +5,7 @@
   <subtitle><![CDATA[关注代码的秘密， 记录探索点滴， 分享技术收获]]></subtitle>
   <link href="/atom.xml" rel="self"/>
   <link href="http://jangzq.info//"/>
-  <updated>2015-08-11T12:33:25.000Z</updated>
+  <updated>2015-08-24T14:07:30.000Z</updated>
   <id>http://jangzq.info//</id>
   
   <author>
@@ -14,6 +14,412 @@
   </author>
   
   <generator uri="http://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title><![CDATA[java nio之jdk篇]]></title>
+    <link href="http://jangzq.info/2015/08/24/java_nio/"/>
+    <id>http://jangzq.info/2015/08/24/java_nio/</id>
+    <published>2015-08-24T13:42:59.000Z</published>
+    <updated>2015-08-24T14:07:30.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>java nio包括buffer，channel, selector等，最核心的即是多路复用+非阻塞读写，在本篇里，只涉及和socket相关部分的实现。</p>
+<h2 id="channel">channel</h2><p>Channel类的继承关系如下（省略了channel读写相关的父类，如ReadableByteChannel等等）。<br><img src="/images/nio-channel.jpeg" alt="Channel类图"><br>通过上图，可以看出Socket相关的两个Channel，需要具备两个特性：selectable和interruptible。</p>
+<h3 id="Selectable">Selectable</h3><p>selectable表示可以用来IO多路复用，在<code>AbstractSelectableChannel</code>中，保存着这个channel所有注册的SelectionKey（变量：SelectionKey[] keys），通过SelectionKey同Selector关联起来，当关闭channel时，使用这个信息，从Selector中关闭自己的监听, 表现Selectable的几个主要方法：<br><strong>public abstract int validOps()</strong><br>返回支持的操作。在ServerSocketChannel中为<code>return SelectionKey.OP_ACCEPT</code>，在SocketChannel中<code>return (SelectionKey.OP_READ | SelectionKey.OP_WRITE | SelectionKey.OP_CONNECT)</code>。</p>
+<p><strong>public abstract SelectionKey register(Selector sel, int ops, Object att) throws ClosedChannelException</strong><br>注册时调用的方法，将这个channel注册到指定的Selector中，关注的操作为ops，att为附件对象，当事件满足时，返回的SelectionKey里包含此对象。这个方法在AbstractSelectableChannel中实现。</p>
+<ol>
+<li><p>首先检查操作是否是自己关注的</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> ((ops &amp; ~validOps()) != <span class="number">0</span>)</span><br><span class="line">         <span class="keyword">throw</span> <span class="keyword">new</span> IllegalArgumentException();</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>检查channel是否已经设置成了非阻塞，如果是阻塞的，抛出异常退出。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (blocking)</span><br><span class="line">      <span class="keyword">throw</span> <span class="keyword">new</span> IllegalBlockingModeException();</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>在注册的SelectionKey（变量：SelectionKey[] keys）里查找这个Selector的对应SelectionKey，如果存在，更新其中的关注操作属性，否则调用Selector的register方法，将返回的SelectionKey保存在注册SelectionKey数组中。Selector的register方法后文介绍，这里提前说一句，在java nio中，当正在执行select阻塞，那么是无法注册新的事件的，这是因为两个操作使用同一个锁同步，在select时，进入这个锁没有退出。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">SelectionKey k = findKey(sel);</span><br><span class="line"><span class="keyword">if</span> (k != <span class="keyword">null</span>) &#123;</span><br><span class="line">    k.interestOps(ops);</span><br><span class="line">    k.attach(att);</span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">if</span> (k == <span class="keyword">null</span>) &#123;</span><br><span class="line">    <span class="comment">// New registration</span></span><br><span class="line">    <span class="keyword">synchronized</span> (keyLock) &#123;</span><br><span class="line">        <span class="keyword">if</span> (!isOpen())</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> ClosedChannelException();</span><br><span class="line">        k = ((AbstractSelector)sel).register(<span class="keyword">this</span>, ops, att);</span><br><span class="line">        addKey(k);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">return</span> k;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p><strong>public abstract SelectableChannel configureBlocking(boolean block) throws IOException</strong><br>设为阻塞或者非阻塞模式，在底层，使用fcntl方法进行设置。</p>
+<h3 id="interruptible">interruptible</h3><p>interruptible指的是，这个channel可以异步关闭或者interrupted，即当这个channel阻塞在一个io操作时，我们调用这个channel的close方法，会导致阻塞退出，并且抛出<code>AsynchronousCloseException</code>异常。另外，当阻塞的时候，当我们调用这个线程的interrupt()方法时，会导致阻塞退出，并且抛出ClosedByInterruptException，下面我们看看这是如何实现的，首先看<code>AbstractInterruptibleChannel</code>类。<br>在<code>AbstractInterruptibleChannel</code>类里，实现了begin和end方法，在所有阻塞操作时，都采用如下方式调用。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">boolean</span> completed = <span class="keyword">false</span>;</span><br><span class="line"><span class="keyword">try</span> &#123;</span><br><span class="line">    begin();</span><br><span class="line">    completed = ...;    <span class="comment">// Perform blocking I/O operation</span></span><br><span class="line">    <span class="keyword">return</span> ...;         <span class="comment">// Return result</span></span><br><span class="line">&#125; <span class="keyword">finally</span> &#123;</span><br><span class="line">    end(completed);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p><strong>protected final void begin()</strong><br>在begin操作里，调用<code>blockedOn(interruptor)</code>将一个Interruptible回调注册到当前线程，当我们调用此线程的interrupt()方法时，会回调Interruptible的interrupt方法，这个方法定义如下，即调用implCloseChannel方法。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title">interrupt</span><span class="params">(Thread target)</span> </span>&#123;</span><br><span class="line">      <span class="keyword">synchronized</span> (closeLock) &#123;</span><br><span class="line">          <span class="keyword">if</span> (!open)</span><br><span class="line">              <span class="keyword">return</span>;</span><br><span class="line">          open = <span class="keyword">false</span>;</span><br><span class="line">          interrupted = target;</span><br><span class="line">          <span class="keyword">try</span> &#123;</span><br><span class="line">              AbstractInterruptibleChannel.<span class="keyword">this</span>.implCloseChannel();</span><br><span class="line">          &#125; <span class="keyword">catch</span> (IOException x) &#123; &#125;</span><br><span class="line">      &#125;</span><br><span class="line">  &#125;&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>通过上述定义可以看出，interrupt时的操作和close就一致了，下面我们看看close如何终结阻塞操作，相关操作和channel的类型有关，我们看一下ServerSocketChannel的实现,在<code>ServerSocketChannelImpl</code>里，<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">protected</span> <span class="keyword">void</span> <span class="title">implCloseSelectableChannel</span><span class="params">()</span> <span class="keyword">throws</span> IOException </span>&#123;</span><br><span class="line">    <span class="keyword">synchronized</span> (stateLock) &#123;</span><br><span class="line">        <span class="keyword">if</span> (state != ST_KILLED)</span><br><span class="line">            nd.preClose(fd);</span><br><span class="line">        <span class="keyword">long</span> th = thread;</span><br><span class="line">        <span class="keyword">if</span> (th != <span class="number">0</span>)</span><br><span class="line">            NativeThread.signal(th);</span><br><span class="line">        <span class="keyword">if</span> (!isRegistered())</span><br><span class="line">            kill();</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>通过上述实现可以看出，是向目标线程发送信号，导致阻塞退出，关于阻塞退出block，在前面文章介绍内核实现的时候，多次提到。<code>NativeThread.signal</code>在jdk里的实现是：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (pthread_kill((<span class="keyword">pthread_t</span>)thread, INTERRUPT_SIGNAL))</span><br><span class="line">    JNU_ThrowIOExceptionWithLastError(env, <span class="string">"Thread signal failed"</span>);</span><br></pre></td></tr></table></figure></p>
+<blockquote>
+<blockquote>
+<p>在ServerSocketChannel和SocketChannel中的connect， bind, listen等操作虽然进行了重新封装，但调用系统调用等和过去的socket操作基本一样，这里不再赘述。 在输入输出函数方面，nio中用ByteBuffer重新实现，在系统调用方面使用的是write/read，不同于过去的send/recv操作，但是在内核中，最终调用的代码是一样的。nio和过去的socket的io操作，一个显著的变化是nio中支持直接使用Direct Buffer，即堆外内存。</p>
+</blockquote>
+</blockquote>
+<h2 id="Selector—多路复用">Selector—多路复用</h2><p>Selector类的继承关系为：<br><img src="/images/nio-selector.jpeg" alt="Selector类图"></p>
+<h3 id="抽象实现">抽象实现</h3><p>在这里，讲解java nio对多路复用的抽象，即和具体实现如epoll，select等无关的部分。<br>在SelectorImpl中，有两个Set，分别对应于注册的事件（HashSet<selectionkey> keys），和就绪的事件（Set<selectionkey> selectedKeys），在返回给调用者时为了防止直接修改，进行了只读封装，即<code>publicKeys = Collections.unmodifiableSet(keys)</code>和<code>publicSelectedKeys = Util.ungrowableSet(selectedKeys)</code>。在这个类里，另外需要注意的是，register、selector、close都使用publicKeys同步，说明这几个操作是同步的，具体的实现都在子类里，在后文中，将看一下epll的实现。</selectionkey></selectionkey></p>
+<h4 id="register">register</h4><p><strong>protected final SelectionKey register(AbstractSelectableChannel ch,  int ops, Object attachment)</strong><br>这个方法是在Channel的regiser方法中调用的，在那里已经判断了不存在相应的SelectionKey，所以在这里新建一个SelectionKey对象，并调用子类的<code>implRegister</code>方法交给具体的实现去处理，然后，调用SelectionKey的interestOps方法关注事件。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">SelectionKeyImpl k = <span class="keyword">new</span> SelectionKeyImpl((SelChImpl)ch, <span class="keyword">this</span>);</span><br><span class="line">k.attach(attachment);</span><br><span class="line"><span class="keyword">synchronized</span> (publicKeys) &#123;</span><br><span class="line">    implRegister(k);</span><br><span class="line">&#125;</span><br><span class="line">k.interestOps(ops);</span><br></pre></td></tr></table></figure></p>
+<h4 id="select">select</h4><p><strong>public int select() throws IOException</strong><br>调用的是lockAndDoSelect。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">synchronized</span> (publicKeys) &#123;</span><br><span class="line">    <span class="keyword">synchronized</span> (publicSelectedKeys) &#123;</span><br><span class="line">        <span class="keyword">return</span> doSelect(timeout);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="unregister">unregister</h4><p>取消关注某一个文件，是调用SelectionKey的cancel方法，在这里面调用的<code>AbstractSelector</code>的<code>void cancel(SelectionKey k)</code>方法，如下：<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">cancel</span><span class="params">(SelectionKey k)</span> </span>&#123;                       <span class="comment">// package-private</span></span><br><span class="line">    <span class="keyword">synchronized</span> (cancelledKeys) &#123;</span><br><span class="line">        cancelledKeys.add(k);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>从中可以看出，并没有真正的取消，而是加到了一个cancel队列，留待以后处理，处理这个cancel队列的代码在<code>SelectorImpl</code>的<code>processDeregisterQueue</code>方法，这个方法在select操作（如select或者poll_wait）前后执行，比如在<code>EPollSelectorImpl</code>的<code>doSelect</code>中，就是如此实现：<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">processDeregisterQueue();</span><br><span class="line"><span class="keyword">try</span> &#123;</span><br><span class="line">    begin();</span><br><span class="line">    pollWrapper.poll(timeout);</span><br><span class="line">&#125; <span class="keyword">finally</span> &#123;</span><br><span class="line">    end();</span><br><span class="line">&#125;</span><br><span class="line">processDeregisterQueue();</span><br></pre></td></tr></table></figure></p>
+<p><code>processDeregisterQueue</code>方法即遍历cancle队列，依次调用<code>implDereg(SelectionKeyImpl ski)</code>，并清空cancel队列。</p>
+<h4 id="修改关注的事件">修改关注的事件</h4><p>调用的是<code>SelectionKeyImpl</code>的<code>SelectionKey interestOps(int ops)</code>方法，这个方法调用的是channel的<code>void translateAndSetInterestOps(int ops, SelectionKeyImpl sk)</code>方法，最终调用的是Selector的<code>void putEventOps(SelectionKeyImpl sk, int ops)</code>方法。</p>
+<h3 id="epoll实现">epoll实现</h3><p><strong>请先阅读“java nio之内核篇”</strong><br>java nio使用Selector来实现多路复用，在linux中采用的是epoll方式，实现类为<code>EPollSelectorImpl</code>， 在这部分分别介绍上一节里涉及到的操作。<br>在java中，使用<code>EPollArrayWrapper</code>封装了epoll实例，在构造函数里，调用了epoll_create方法，并且将返回的epoll实例文件描述符保存到成员变量<code>private final int epfd</code>中。</p>
+<h4 id="register-1">register</h4><p><strong>protected void implRegister(SelectionKeyImpl ski)</strong><br><code>EPollArrayWrapper</code>使用<code>private final byte[] eventsLow = new byte[MAX_UPDATE_ARRAY_SIZE]</code>和<code>private Map&lt;Integer,Byte&gt; eventsHigh</code>保存注册的文件事件，如果文件描述符小于MAX_UPDATE_ARRAY_SIZE，则存放在数组里，如果大于这个值，则存放在map里。在这个方法里，其实只是修改了其中的值。</p>
+<h4 id="select-1">select</h4><p><strong>protected int doSelect(long timeout) throws IOException</strong></p>
+<ol>
+<li>首先处理cancel队列，对于每一个SelectionKey调用<code>implDereg</code>。</li>
+<li>调用EPollArrayWrapper的poll方法，在其中调用epoll_wait。<br>首先，处理变化了关注事件的文件描述符，在EPollArrayWrapper中，使用<code>int[] updateDescriptors</code>记录了关注事件变化了的文件描述符，<code>BitSet registered</code>保存了文件描述符是否已经注册了，上文中提到的<code>eventsLow</code>和<code>eventsHigh</code>中存放着现在关注的事件，使用这些信息，可以判断出调用epoll_ctl时需要的操作，即EPOLL_CTL_ADD、EPOLL_CTL_MOD、EPOLL_CTL_DEL，然后调用epoll_ctl。<br>然后，调用epoll_wait，在EPollArrayWrapper初始化的时候，分配了一块儿堆外内存（AllocatedNativeObject pollArray），作为epoll_wait调用传出的epoll_event数组地址，其大小为NUM_EPOLLEVENTS * SIZE_EPOLLEVENT。<br>当epoll_wait返回后，判断是否被interrupt，后文详细描述。</li>
+<li>再次处理cancel队列，对于每一个SelectionKey调用<code>implDereg</code>。</li>
+<li>调用<code>updateSelectedKeys</code>，将堆外的epoll_event信息，保存到java的<code>Set&lt;SelectionKey&gt; selectedKeys</code>里，并且把就绪的操作，保存到其中的SelectionKey中。</li>
+</ol>
+<h4 id="unregister-1">unregister</h4><p><strong>protected void implDereg(SelectionKeyImpl ski) throws IOException</strong><br>其中，最主要的操作是调用EPollArrayWrapper的remove，首先把<code>eventsLow</code>和<code>eventsHigh</code>中对应文件的event设置为KILLED。如果文件已经注册了，直接调用epoll_ctl。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// kill pending and future update for this file descriptor</span></span><br><span class="line">setUpdateEvents(fd, KILLED, <span class="keyword">false</span>);</span><br><span class="line"></span><br><span class="line"><span class="comment">// remove from epoll</span></span><br><span class="line"><span class="keyword">if</span> (registered.get(fd)) &#123;</span><br><span class="line">    epollCtl(epfd, EPOLL_CTL_DEL, fd, <span class="number">0</span>);</span><br><span class="line">    registered.clear(fd);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="修改关注的事件-1">修改关注的事件</h4><p><strong>void putEventOps(SelectionKeyImpl ski, int ops)</strong><br>修改关注事件时候调用，主要进行两个操作，一个是修改<code>eventsLow</code>和<code>eventsHigh</code>，另一个是修改<code>int[] updateDescriptors</code>,这两个的作用前文已经描述了。</p>
+<h4 id="wakeup">wakeup</h4><p>当阻塞在epoll_wait时，可以通过此方法使其返回，在epoll的实现中，采用了如下方法。<br>在EPollSelectorImpl的构造函数里，新建了一个pipe，把这个管道的读写文件描述符，保存在<code>EPollArrayWrapper</code>的<code>incomingInterruptFD</code>，<code>outgoingInterruptFD</code>里，并且调用epoll_ctl关注incomingInterruptFD的读事件。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">initInterrupt</span><span class="params">(<span class="keyword">int</span> fd0, <span class="keyword">int</span> fd1)</span> </span>&#123;</span><br><span class="line">    outgoingInterruptFD = fd1;</span><br><span class="line">    incomingInterruptFD = fd0;</span><br><span class="line">    epollCtl(epfd, EPOLL_CTL_ADD, fd0, EPOLLIN);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>这样，当我们向管道里写数据的时候，则就会将epoll_wait退出等待，在调用wakeUp时，调用的本地方法如下，即向管道里写入一个字节的数据。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">Java_sun_nio_ch_EPollArrayWrapper_interrupt(JNIEnv *env, jobject <span class="keyword">this</span>, jint fd)</span><br><span class="line">&#123;</span><br><span class="line">    <span class="keyword">int</span> fakebuf[<span class="number">1</span>];</span><br><span class="line">    fakebuf[<span class="number">0</span>] = <span class="number">1</span>;</span><br><span class="line">    <span class="keyword">if</span> (write(fd, fakebuf, <span class="number">1</span>) &lt; <span class="number">0</span>) &#123;</span><br><span class="line">        JNU_ThrowIOExceptionWithLastError(env,<span class="string">"write to interrupt fd failed"</span>);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p><strong>从上面可以看出，在java中一个Selector会占用3个文件描述符</strong>。<br>为什么不采用发送信号的方式使epoll_wait退出呢？这是因为从内核篇我们可以看出，如果收到信号，内核并不处理已经就绪的事件。</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>java nio包括buffer，channel, selector等，最核心的即是多路复用+]]>
+    </summary>
+    
+      <category term="jdk" scheme="http://jangzq.info/tags/jdk/"/>
+    
+      <category term="linux内核" scheme="http://jangzq.info/tags/linux%E5%86%85%E6%A0%B8/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[java nio之内核篇]]></title>
+    <link href="http://jangzq.info/2015/08/24/nio-kernel/"/>
+    <id>http://jangzq.info/2015/08/24/nio-kernel/</id>
+    <published>2015-08-24T13:42:58.000Z</published>
+    <updated>2015-08-24T14:05:21.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在本篇里，介绍了内核中epoll的相关实现，诸如epoll实例在内核中是怎么表示的，epoll_wait是怎么等待的， 文件上的就绪事件是怎么唤醒epoll_wait的，以及Level-triggered和edge-triggered怎么实现的，等等。<br>在内核中，一个epoll实例由文件表示，具有一个文件描述符。epoll实例独有的信息，由eventpoll结构体描述，存放于文件描述符的private_data变量中。这个结构体关键变量如下：<br>struct rb_root rbr：使用epoll_ctl添加到epoll实例的的文件，都存在一个epitem结构体，使用红黑树保存到这个变量中。<br>wait_queue_head_t wq：使用epoll_wait等待队列。</p>
+<p>对于每一个监视文件，用一个struct epitem表示，包含如下关键属性：<br>struct list_head fllink：用这个变量把epitem连接到struct file的f_ep_links链表中，这样从struct file中就可以遍历所有相关epoll实例，在关闭文件的时候，可以使用这个链表取消这些监视。<br>struct list_head rdllink：用这个变量将epitem连接到就绪队列（eventpoll-&gt;rdllist)。</p>
+<h3 id="epoll_create">epoll_create</h3><p>epoll_create的实现如下，从中可以看出size参数只要是正数，具体值无所谓。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">SYSCALL_DEFINE1(epoll_create, <span class="keyword">int</span>, size)</span><br><span class="line">&#123;</span><br><span class="line">    <span class="keyword">if</span> (size &lt;= <span class="number">0</span>)</span><br><span class="line">        <span class="keyword">return</span> -EINVAL;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> sys_epoll_create1(<span class="number">0</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>在epoll_create1中，可以看出主要操作为：</p>
+<ol>
+<li><p>创建并初始化一个eventpoll结构体。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">error = ep_alloc(&amp;ep);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>分配一个epoll类型的文件，并把eventpoll放在private_data成员变量里，并分配fd，建立fd和文件的映射，从中可以看出epoll也受打开文件数目的限制。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">file = anon_inode_getfile(<span class="string">"[eventpoll]"</span>, &amp;eventpoll_fops, ep,</span><br><span class="line">             O_RDWR | (flags &amp; O_CLOEXEC));</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h3 id="epoll_ctl">epoll_ctl</h3><p>首先在保存epitem的红黑树中，查找需要监视的文件，然后再根据操作的不同，进行判断，即在EPOLL_CTL_ADD的情况下，如果存在是错误的，对于其他情况，不存在是错误的。然后根据操作，调用不同的方法。<br><strong>注：</strong>另外，从这段代码可以看出， POLLERR和POLLHUP是必须监视的，如下：<br>  <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">case</span> EPOLL_CTL_ADD:</span><br><span class="line">    <span class="keyword">if</span> (!epi) &#123;</span><br><span class="line">        epds.events |= POLLERR | POLLHUP;</span><br><span class="line">        error = ep_insert(ep, &amp;epds, tf.file, fd, full_check);</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="ep_insert">ep_insert</h4><p>当操作为EPOLL_CTL_ADD时，调用的是<code>ep_insert</code>，主要步骤为：</p>
+<ol>
+<li>首先，检查当前epoll实例监视的文件数，不能超过<code>/proc/sys/fs/epoll/max_user_watches</code>。</li>
+<li>在eventpoll_epi slab cache中，分配epitem。</li>
+<li><p>向所监视的文件注册，调用的是struct file —-&gt; file_operations    <em>f_op —-&gt;`unsigned int (</em>poll) (struct file <em>, struct poll_table_struct </em>)`方法，凡是支持poll操作的文件，这个方法指针不为null，其中poll_table_struct结构体定义如下，其中poll_queue_proc是一个回调方法，在文件的poll方法里，使用这个回调函数，将本epitem信息加入到监视file的等待队列。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"> <span class="keyword">typedef</span> <span class="keyword">struct</span> <span class="keyword">poll_t</span>able_struct &#123;</span><br><span class="line">    poll_queue_proc _qproc;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> _key;</span><br><span class="line"> &#125; <span class="keyword">poll_t</span>able</span><br><span class="line"> ``` </span><br><span class="line">  在这里这个回调函数是`ep_ptable_queue_proc`，在文件的poll函数里，调用这个函数，其中`<span class="keyword">wait_queue_head_t</span> *whead`用来传入等待队列头，在`ep_ptable_queue_proc`函数里，构造了一个等待队列成员，加入到这个队列中，这个等待队列成员包含一个回调方法，需要唤醒等待队列成员时调用，这个函数是`ep_poll_callback`，这部分在后面详细描述。</span><br><span class="line"><span class="number">4.</span> 将epitem加入到监视file的f_ep_links里，并且插入红黑树。</span><br><span class="line">  ```<span class="function">c</span><br><span class="line"> <span class="title">list_add_tail_rcu</span><span class="params">(&amp;epi-&gt;fllink, &amp;tfile-&gt;f_ep_links)</span></span>;</span><br><span class="line">  ep_rbtree_insert(ep, epi);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果注册时返回值表明，现在已经ready了，就把此epitem连接到就绪队列（eventpoll-&gt;rdllist）。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> ((revents &amp; event-&gt;events) &amp;&amp; !ep_is_linked(&amp;epi-&gt;rdllink)) &#123;</span><br><span class="line">      <span class="keyword">list_add_t</span>ail(&amp;epi-&gt;rdllink, &amp;ep-&gt;rdllist);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果有进程正在调用epoll_wait等待，唤醒。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (waitqueue_active(&amp;ep-&gt;wq))</span><br><span class="line">          wake_up_locked(&amp;ep-&gt;wq);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h4 id="ep_remove">ep_remove</h4><p>当操作为EPOLL_CTL_DEL时，调用的是<code>ep_remove</code>，主要步骤为：</p>
+<ol>
+<li><p>从被监视文件的等待队列里删除。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ep_unregister_pollwait(ep, epi);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>从struct file的f_ep_links链表中删除。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">list_del_rcu(&amp;epi-&gt;fllink);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>从epoll实例的红黑表删除。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">rb_erase(&amp;epi-&gt;rbn, &amp;ep-&gt;rbr);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果ready队列里包含此epitem，删除。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (ep_is_linked(&amp;epi-&gt;rdllink))</span><br><span class="line">  list_del_init(&amp;epi-&gt;rdllink);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h4 id="ep_modify">ep_modify</h4><p>当操作为EPOLL_CTL_MOD时，调用的是<code>ep_modify</code>，主要步骤为：</p>
+<ol>
+<li><p>修改epitem中的事件属性。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">epi-&gt;event.events = event-&gt;events; <span class="comment">/* need barrier below */</span></span><br><span class="line">epi-&gt;event.data = event-&gt;data; <span class="comment">/* protected by mtx */</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>和新加时一样，调用监视文件的poll方法，不同的是，将本epitem信息加入到监视file的等待队列的回调函数为null，也就是得到当前是否有满足的事件，如果有的话，将自己加入到就绪队列，并唤醒等待队列。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">   init_poll_funcptr(&amp;pt, NULL);</span><br><span class="line">   revents = ep_item_poll(epi, &amp;pt);</span><br><span class="line">   ......</span><br><span class="line">   <span class="keyword">if</span> (revents &amp; event-&gt;events) &#123;</span><br><span class="line">     spin_lock_irq(&amp;ep-&gt;lock);</span><br><span class="line">     <span class="keyword">if</span> (!ep_is_linked(&amp;epi-&gt;rdllink)) &#123;</span><br><span class="line">        <span class="keyword">list_add_t</span>ail(&amp;epi-&gt;rdllink, &amp;ep-&gt;rdllist);</span><br><span class="line">        ep_pm_stay_awake(epi);</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Notify waiting tasks that events are available */</span></span><br><span class="line">        <span class="keyword">if</span> (waitqueue_active(&amp;ep-&gt;wq))</span><br><span class="line">            wake_up_locked(&amp;ep-&gt;wq);</span><br><span class="line">        <span class="keyword">if</span> (waitqueue_active(&amp;ep-&gt;poll_wait))</span><br><span class="line">            pwake++;</span><br><span class="line">     &#125;</span><br><span class="line">     spin_unlock_irq(&amp;ep-&gt;lock);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h3 id="epoll_wait">epoll_wait</h3><ol>
+<li>首先，确定超时时间，当timeout小于0时，无限等待，等于0时，立即返回，正数代表等待的毫秒数。</li>
+<li><p>当没有就绪的事件时，把自己加入到epoll实例的等待队列中，然后开始等待，直到有就绪的事件，或者超时，或者收到信号。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line">init_waitqueue_entry(&amp;wait, current);</span><br><span class="line">__add_wait_queue_exclusive(&amp;ep-&gt;wq, &amp;wait);</span><br><span class="line">......</span><br><span class="line"><span class="keyword">for</span> (;;) &#123;</span><br><span class="line">    set_current_state(TASK_INTERRUPTIBLE);</span><br><span class="line">    <span class="keyword">if</span> (ep_events_available(ep) || timed_out)</span><br><span class="line">        <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">if</span> (signal_pending(current)) &#123;</span><br><span class="line">        res = -EINTR;</span><br><span class="line">        <span class="keyword">break</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    spin_unlock_irqrestore(&amp;ep-&gt;lock, flags);</span><br><span class="line">    <span class="keyword">if</span> (!schedule_hrtimeout_range(to, slack, HRTIMER_MODE_ABS))</span><br><span class="line">        timed_out = <span class="number">1</span>;</span><br><span class="line"></span><br><span class="line">    spin_lock_irqsave(&amp;ep-&gt;lock, flags);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>当退出等待后，见下面代码，首先将自己从等待队列删除，如果不是收到信号（!res），并且存在就绪事件（eavail），遍历就绪队列，将拷贝事件结果到用户空间，如果拷贝个数为0，并且没有超时，继续等待。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">__remove_wait_queue(&amp;ep-&gt;wq, &amp;wait);</span><br><span class="line">......</span><br><span class="line"><span class="keyword">if</span> (!res &amp;&amp; eavail &amp;&amp;</span><br><span class="line">  !(res = ep_send_events(ep, events, maxevents)) &amp;&amp; !timed_out)</span><br><span class="line">  <span class="keyword">goto</span> fetch_events;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>下面介绍遍历就绪队列，将事件拷贝到用户空间的函数<code>ep_send_events</code>，这个函数主要调用的是<code>ep_scan_ready_list</code>。</p>
+<ol>
+<li><p>一次性把就绪队列全部移到一个临时队列。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">spin_lock_irqsave(&amp;ep-&gt;lock, flags);</span><br><span class="line">list_splice_init(&amp;ep-&gt;rdllist, &amp;txlist);</span><br><span class="line">ep-&gt;ovflist = NULL;</span><br><span class="line">spin_unlock_irqrestore(&amp;ep-&gt;lock, flags);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>调用传入的方法将事件拷贝到用户空间，在这里为：ep_send_events_proc。<br>遍历上一步的就绪队列，处理的最大个数即传入的maxevents。对于每一个就绪队列上的epitem，调用注册文件上的poll方法，得到目前存在的就绪事件，将事件拷贝到用户空间, 如果出错，再放回就绪队列。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">     <span class="keyword">for</span> (eventcnt = <span class="number">0</span>, uevent = esed-&gt;events;</span><br><span class="line">        !list_empty(head) &amp;&amp; eventcnt &lt; esed-&gt;maxevents;) &#123;</span><br><span class="line">       epi = list_first_entry(head, <span class="keyword">struct</span> epitem, rdllink);</span><br><span class="line">       .......</span><br><span class="line">       list_del_init(&amp;epi-&gt;rdllink);</span><br><span class="line">revents = ep_item_poll(epi, &amp;pt);</span><br><span class="line">        <span class="keyword">if</span> (revents) &#123;</span><br><span class="line">           <span class="keyword">if</span> (__put_user(revents, &amp;uevent-&gt;events) ||</span><br><span class="line">               __put_user(epi-&gt;event.data, &amp;uevent-&gt;data)) &#123;</span><br><span class="line">          list_add(&amp;epi-&gt;rdllink, head);</span><br><span class="line">               ep_pm_stay_awake(epi);</span><br><span class="line">               <span class="keyword">return</span> eventcnt ? eventcnt : -EFAULT;</span><br></pre></td></tr></table></figure>
+<p>如果设置了EPOLLONESHOT，则设置<code>epi-&gt;event.events &amp;= EP_PRIVATE_BITS</code>，下次不触发。<br>如果没有设置edge trigger（说明level trigger是缺省的），即如果没有读完，或者没有操作，会一直通知。这是通过如下机制实现的，只要本次有需要通知的事件，处理完成后，仍然将本epitem挂到就绪队列，下次调用epoll_wait时，由于首先查看就绪队列，就会处理这个epitem，如果此epitem没有就绪事件，就不再挂回去。</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">else</span> <span class="keyword">if</span> (!(epi-&gt;event.events &amp; EPOLLET)) &#123;</span><br><span class="line">    <span class="keyword">list_add_t</span>ail(&amp;epi-&gt;rdllink, &amp;ep-&gt;rdllist);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>当上一步处理时，新来的就绪epitem保存在ep-&gt;ovflist里，这时，如果这些epitem不在就绪队列，将它们加入到就绪队列。</p>
+</li>
+<li>由于处理就绪队列时有处理个数限制，所以临时队列里可能有剩余未处理的epitem，将它们重新放回就绪队列。</li>
+<li>如果就绪队列不为空，唤醒等待队列。</li>
+</ol>
+<h3 id="就绪通知">就绪通知</h3><p>在这里，讲解如何通知epoll实例事件发生的。上文在ep_insert中，向目标文件注册时，在事件等待队列成员里设置了回调函数，当事件唤醒时，执行此函数，这个函数为：<code>ep_poll_callback</code>，首先讲解此函数，这个函数的主要功能就是如果这个epitem符合条件，加入到就绪队列，并唤醒等待在epoll_wait上的进程。</p>
+<ol>
+<li><p>如果设置了EPOLLONESHOT，在上文中设置了<code>EP_PRIVATE_BITS</code>,如果这种情况，直接跳过。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!(epi-&gt;event.events &amp; ~EP_PRIVATE_BITS))</span><br><span class="line">    <span class="keyword">goto</span> out_unlock;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果是不关心的事件，跳过</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (key &amp;&amp; !((<span class="keyword">unsigned</span> <span class="keyword">long</span>) key &amp; epi-&gt;event.events))</span><br><span class="line">    <span class="keyword">goto</span> out_unlock;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果不在就绪队列里，加入就绪队列。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!ep_is_linked(&amp;epi-&gt;rdllink)) &#123;</span><br><span class="line">    <span class="keyword">list_add_t</span>ail(&amp;epi-&gt;rdllink, &amp;ep-&gt;rdllist);</span><br><span class="line">    ep_pm_stay_awake_rcu(epi);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>唤醒等待在epoll_wait的进程。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (waitqueue_active(&amp;ep-&gt;wq))</span><br><span class="line"> wake_up_locked(&amp;ep-&gt;wq);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在本篇里，介绍了内核中epoll的相关实现，诸如epoll实例在内核中是怎么表示的，epoll]]>
+    </summary>
+    
+      <category term="jdk" scheme="http://jangzq.info/tags/jdk/"/>
+    
+      <category term="linux内核" scheme="http://jangzq.info/tags/linux%E5%86%85%E6%A0%B8/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[自顶向下话socket之accept]]></title>
+    <link href="http://jangzq.info/2015/08/24/socket_accept/"/>
+    <id>http://jangzq.info/2015/08/24/socket_accept/</id>
+    <published>2015-08-24T13:42:56.000Z</published>
+    <updated>2015-08-24T14:02:55.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。</p>
+<h2 id="JDK实现">JDK实现</h2><p>调用的为<code>Java_java_net_PlainSocketImpl_socketAccept</code>，如果设置了超时，则使用NET_Timeout来等待超时，或者可读，详细描述见<a href="http://jangzq.info/2015/08/06/jdk_linux_close/">自顶向下话socket之blocking io wrapper</a>，当超时或者出错，抛异常退出。<br>然后调用accept系统调用。</p>
+<h2 id="linux内核实现">linux内核实现</h2><p>和accept相关的内核操作分为两部分，一部分是内核软中断上下文中的协议处理部分，即完成3次握手等协议处理，最后将连接放入request_sock_queue的rskq_accept_head链表，在进程上下文中，即调用accept系统调用时，处理此链表中的连接。下面分别描述。</p>
+<h3 id="内核软中断上下文">内核软中断上下文</h3><p>在这里不展开讨论tcp协议，只是描述一下我们感兴趣的部分。在<code>tcp_rcv_state_process</code>方法里，可以看出当socket的状态为TCP_LISTEN时，如果收到syn，调用相应协议的<code>conn_request</code>方法，在这里，调用的是<code>tcp_conn_request</code>。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">case</span> TCP_LISTEN:</span><br><span class="line">    <span class="keyword">if</span> (th-&gt;ack)</span><br><span class="line">        <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (th-&gt;rst)</span><br><span class="line">        <span class="keyword">goto</span> discard;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (th-&gt;syn) &#123;</span><br><span class="line">        <span class="keyword">if</span> (th-&gt;fin)</span><br><span class="line">            <span class="keyword">goto</span> discard;</span><br><span class="line">        <span class="keyword">if</span> (icsk-&gt;icsk_af_ops-&gt;conn_request(sk, skb) &lt; <span class="number">0</span>)</span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span>;</span><br></pre></td></tr></table></figure></p>
+<p>在<code>tcp_conn_request</code>，当accept backlog满了，丢弃此包。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (sk_acceptq_is_full(sk) &amp;&amp; inet_csk_reqsk_queue_young(sk) &gt; <span class="number">1</span>) &#123;</span><br><span class="line">    NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);</span><br><span class="line">    <span class="keyword">goto</span> drop;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>其中的判断逻辑为<code>sk-&gt;sk_ack_backlog &gt; sk-&gt;sk_max_ack_backlog</code>。</p>
+<h3 id="进程上下文">进程上下文</h3><p>调用inet_accept，在这个函数里，最终调用的是<code>inet_csk_accept</code>方法，这个方法里就是从request_sock_queue的rskq_accept_head链表中取出连接，如果队列为空，则根据是否阻塞模式，进行等待，或者退出，从下面代码可以看出，当为非阻塞模式时，将errno设为EAGAIN，然后退出，否则以timeout进行等待。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (reqsk_queue_empty(<span class="built_in">queue</span>)) &#123;</span><br><span class="line">    <span class="keyword">long</span> timeo = sock_rcvtimeo(sk, flags &amp; O_NONBLOCK);</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* If this is a non blocking socket don't sleep */</span></span><br><span class="line">    error = -EAGAIN;</span><br><span class="line">    <span class="keyword">if</span> (!timeo)</span><br><span class="line">        <span class="keyword">goto</span> out_err;</span><br><span class="line"></span><br><span class="line">    error = inet_csk_wait_for_connect(sk, timeo);</span><br><span class="line">    <span class="keyword">if</span> (error)</span><br><span class="line">        <span class="keyword">goto</span> out_err;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示sock]]>
+    </summary>
+    
+      <category term="jdk" scheme="http://jangzq.info/tags/jdk/"/>
+    
+      <category term="linux内核" scheme="http://jangzq.info/tags/linux%E5%86%85%E6%A0%B8/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[自顶向下话socket之bind、listen]]></title>
+    <link href="http://jangzq.info/2015/08/24/bind_listen/"/>
+    <id>http://jangzq.info/2015/08/24/bind_listen/</id>
+    <published>2015-08-24T13:42:55.000Z</published>
+    <updated>2015-08-24T14:02:15.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。<br>在java程序中，bind函数调用了bind和listen两个操作，由于bind比较简单，就是判断地址是否已经使用，如未使用将本地地址保存在socket里，所以不再讨论，主要看一下listen操作。</p>
+<h2 id="JDK实现">JDK实现</h2><p>调用的是listen系统调用。</p>
+<h2 id="linux内核实现">linux内核实现</h2><ol>
+<li><p>参数中backlog如果大于<code>/proc/sys/net/core/somaxconn</code>，设置为<code>/proc/sys/net/core/somaxconn</code>。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">somaxconn = sock_net(sock-&gt;sk)-&gt;core.sysctl_somaxconn;</span><br><span class="line"><span class="keyword">if</span> ((<span class="keyword">unsigned</span> <span class="keyword">int</span>)backlog &gt; somaxconn)</span><br><span class="line">    backlog = somaxconn;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>然后，调用<code>inet_listen</code>，使用backlog参数初始化icsk_accept_queue。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">int</span> rc = reqsk_queue_alloc(&amp;icsk-&gt;icsk_accept_queue, <span class="keyword">nr_t</span>able_entries);</span><br></pre></td></tr></table></figure>
+<p>在这个函数里，给request_sock_queue的struct listen_sock  *listen_opt分配内存，首先确定分配的对象个数，代码很清晰，如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">nr_t</span>able_entries = <span class="keyword">min_t</span>(u32, <span class="keyword">nr_t</span>able_entries, sysctl_max_syn_backlog);</span><br><span class="line"><span class="keyword">nr_t</span>able_entries = <span class="keyword">max_t</span>(u32, <span class="keyword">nr_t</span>able_entries, <span class="number">8</span>);</span><br><span class="line"><span class="keyword">nr_t</span>able_entries = <span class="keyword">roundup_pow_of_t</span>wo(<span class="keyword">nr_t</span>able_entries + <span class="number">1</span>);</span><br><span class="line">lopt_size += <span class="keyword">nr_t</span>able_entries * <span class="keyword">sizeof</span>(<span class="keyword">struct</span> request_sock *);</span><br></pre></td></tr></table></figure>
+<p>分配内存，</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">          </span><br><span class="line"><span class="keyword">if</span> (lopt_size &lt;= (PAGE_SIZE &lt;&lt; PAGE_ALLOC_COSTLY_ORDER))</span><br><span class="line">    lopt = kzalloc(lopt_size, GFP_KERNEL |</span><br><span class="line">                  __GFP_NOWARN |</span><br><span class="line">                  __GFP_NORETRY);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示sock]]>
+    </summary>
+    
+      <category term="linux内核" scheme="http://jangzq.info/tags/linux%E5%86%85%E6%A0%B8/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[自顶向下话socket之close]]></title>
+    <link href="http://jangzq.info/2015/08/24/socket_close/"/>
+    <id>http://jangzq.info/2015/08/24/socket_close/</id>
+    <published>2015-08-24T13:42:53.000Z</published>
+    <updated>2015-08-24T13:59:39.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。<br>在本篇将讨论socket的关闭。</p>
+<h2 id="JDK实现">JDK实现</h2><p>socket.close方法，调用的本地方法<code>Java_java_net_PlainSocketImpl_socketClose0</code>，其中调用的是<code>NET_SocketClose</code>，详情见<a href="http://jangzq.info/2015/08/06/jdk_linux_close/">自顶向下话socket之blocking io wrapper</a>， 在其中调用的是close系统调用。</p>
+<h2 id="linux内核实现">linux内核实现</h2><p><strong>本文并不关注于关闭时的4次握手，而只关注开发网络程序相关内容。</strong><br>close是文件系统子系统的系统调用，所以遵循文件子系统close的规则，当打开的文件的引用大于1时，只是减少引用，并不关闭，这部分由于是vfs子系统内容，以后有机会再详细描述。最终调用的是<code>sock_release</code>，然后调用<code>inet_release</code>，在这个函数里，如果socket设置了SOCK_LINGER参数，则使用相关参数调用<code>tcp_close</code>。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">timeout = <span class="number">0</span>;</span><br><span class="line"><span class="keyword">if</span> (sock_flag(sk, SOCK_LINGER) &amp;&amp;</span><br><span class="line">    !(current-&gt;flags &amp; PF_EXITING))</span><br><span class="line">    timeout = sk-&gt;sk_lingertime;</span><br><span class="line">sock-&gt;sk = NULL;</span><br><span class="line">sk-&gt;sk_prot-&gt;close(sk, timeout);</span><br></pre></td></tr></table></figure></p>
+<p>下面介绍<code>tcp_close</code>：</p>
+<ol>
+<li><p>丢弃接收队列中的skb,如果存在丢弃的数据，向对端发送RST。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">     <span class="keyword">while</span> ((skb = __skb_dequeue(&amp;sk-&gt;sk_receive_queue)) != NULL) &#123;</span><br><span class="line">      u32 len = TCP_SKB_CB(skb)-&gt;end_seq - TCP_SKB_CB(skb)-&gt;seq;</span><br><span class="line">  </span><br><span class="line">      <span class="keyword">if</span> (TCP_SKB_CB(skb)-&gt;tcp_flags &amp; TCPHDR_FIN)</span><br><span class="line">          len--;</span><br><span class="line">      data_was_unread += len;</span><br><span class="line">      __kfree_skb(skb);</span><br><span class="line">  &#125;</span><br><span class="line">.....</span><br><span class="line"><span class="keyword">if</span> (data_was_unread) &#123;</span><br><span class="line">      <span class="comment">/* Unread data was tossed, zap the connection. */</span></span><br><span class="line">      NET_INC_STATS_USER(sock_net(sk), LINUX_MIB_TCPABORTONCLOSE);</span><br><span class="line">      tcp_set_state(sk, TCP_CLOSE);</span><br><span class="line">      tcp_send_active_reset(sk, sk-&gt;sk_allocation);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果设置了SO_LINGER，如下一直等待到timeout，或者发送完数据和FIN后，状态不为“ (TCPF_FIN_WAIT1 | TCPF_CLOSING | TCPF_LAST_ACK)”，</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">sk_stream_wait_close</span><span class="params">(<span class="keyword">struct</span> sock *sk, <span class="keyword">long</span> timeout)</span></span><br><span class="line"></span>&#123;</span><br><span class="line">    <span class="keyword">if</span> (timeout) &#123;</span><br><span class="line">        DEFINE_WAIT(wait);</span><br><span class="line">    </span><br><span class="line">        <span class="keyword">do</span> &#123;</span><br><span class="line">            <span class="keyword">prepare_t</span>o_wait(sk_sleep(sk), &amp;wait,</span><br><span class="line">                    TASK_INTERRUPTIBLE);</span><br><span class="line">            <span class="keyword">if</span> (sk_wait_event(sk, &amp;timeout, !sk_stream_closing(sk)))</span><br><span class="line">                <span class="keyword">break</span>;</span><br><span class="line">        &#125; <span class="keyword">while</span> (!signal_pending(current) &amp;&amp; timeout);</span><br><span class="line"></span><br><span class="line">        finish_wait(sk_sleep(sk), &amp;wait);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示sock]]>
+    </summary>
+    
+      <category term="linux内核" scheme="http://jangzq.info/tags/linux%E5%86%85%E6%A0%B8/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[自顶向下话socket之缓存区内存分配限制]]></title>
+    <link href="http://jangzq.info/2015/08/24/socket_buf/"/>
+    <id>http://jangzq.info/2015/08/24/socket_buf/</id>
+    <published>2015-08-24T13:42:52.000Z</published>
+    <updated>2015-08-24T13:58:14.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。<br>注：简单起见，不考虑cgroup情况。<br>在这里，讨论当需要分配一个新的skb时，需要满足的限制，相关代码在：<code>int __sk_mem_schedule(struct sock *sk, int size, int kind)</code>。</p>
+<h2 id="整体内存限制">整体内存限制</h2><p>首先需要满足一个整体内存限制。在proto结构体里，<code>atomic_long_t       *memory_allocated</code>存放着当前分配的内存数。在TCP协议里，这个内存数受<code>sysctl_tcp_mem</code>限制，此变量在tcp_init_mem中初始化，可以通过<em>/proc/sys/net/ipv4/tcp_mem</em>修改，初始值代码如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">void</span> __<span class="function">init <span class="title">tcp_init_mem</span><span class="params">(<span class="keyword">void</span>)</span></span><br><span class="line"></span>&#123;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> limit = nr_free_buffer_pages() / <span class="number">8</span>;</span><br><span class="line">    limit = max(limit, <span class="number">128U</span>L);</span><br><span class="line">    <span class="keyword">sysctl_t</span>cp_mem[<span class="number">0</span>] = limit / <span class="number">4</span> * <span class="number">3</span>;</span><br><span class="line">    <span class="keyword">sysctl_t</span>cp_mem[<span class="number">1</span>] = limit;</span><br><span class="line">    <span class="keyword">sysctl_t</span>cp_mem[<span class="number">2</span>] = <span class="keyword">sysctl_t</span>cp_mem[<span class="number">0</span>] * <span class="number">2</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>sysctl_tcp_mem中设置了三个界限，超过sysctl_tcp_mem[1]即进入了pressure模式， 进入pressure模式后，在缓存的分配、回收行为都会发生变化，当内存小于sysctl_tcp_mem[0]时，才会退出pressure模式，当内存大于sysctl_tcp_mem[2]时，会阻止内存的分配。相关代码在：<code>int __sk_mem_schedule(struct sock *sk, int size, int kind)</code>，这个方法是判断是否可以分配skb，下面进行分析。<br>如果小于sysctl_tcp_mem[0],才能退出pressure模式：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (parent_status == UNDER_LIMIT &amp;&amp;</span><br><span class="line">        allocated &lt;= sk_prot_mem_limits(sk, <span class="number">0</span>)) &#123;</span><br><span class="line">    sk_leave_memory_pressure(sk);</span><br><span class="line">    <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>大于sysctl_tcp_mem[1]，进入pressure模式：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> ((parent_status &gt; SOFT_LIMIT) ||</span><br><span class="line">        allocated &gt; sk_prot_mem_limits(sk, <span class="number">1</span>))</span><br><span class="line">    sk_enter_memory_pressure(sk);</span><br></pre></td></tr></table></figure></p>
+<p>大于sysctl_tcp_mem[2]，阻止内存分配。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> ((parent_status == OVER_LIMIT) || </span><br><span class="line">            (allocated &gt; sk_prot_mem_limits(sk, <span class="number">2</span>)))</span><br><span class="line">        <span class="keyword">goto</span> suppress_allocation;</span><br></pre></td></tr></table></figure></p>
+<h2 id="读写缓存区限制">读写缓存区限制</h2><p>还有两个系统参数，分别定义了读写缓存区的限制，分别为<code>/proc/sys/net/ipv4/tcp_wmem</code>和<code>/proc/sys/net/ipv4/tcp_rmem</code>，其初始值如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">sysctl_t</span>cp_wmem[<span class="number">0</span>] = SK_MEM_QUANTUM;</span><br><span class="line"><span class="keyword">sysctl_t</span>cp_wmem[<span class="number">1</span>] = <span class="number">16</span>*<span class="number">1024</span>;</span><br><span class="line"><span class="keyword">sysctl_t</span>cp_wmem[<span class="number">2</span>] = max(<span class="number">64</span>*<span class="number">1024</span>, max_wshare);</span><br><span class="line"></span><br><span class="line"><span class="keyword">sysctl_t</span>cp_rmem[<span class="number">0</span>] = SK_MEM_QUANTUM;</span><br><span class="line"><span class="keyword">sysctl_t</span>cp_rmem[<span class="number">1</span>] = <span class="number">87380</span>;</span><br><span class="line"><span class="keyword">sysctl_t</span>cp_rmem[<span class="number">2</span>] = max(<span class="number">87380</span>, max_rshare);</span><br></pre></td></tr></table></figure></p>
+<p>当整体内存判断完后，当一个socket的已分配的内存小于sysctl_tcp_wmem[0]和sysctl_tcp_rmem[0]时，新分配内存的操作一定成功，还是在<code>int __sk_mem_schedule(struct sock *sk, int size, int kind)</code>函数里。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (kind == SK_MEM_RECV) &#123;</span><br><span class="line">    <span class="keyword">if</span> (atomic_read(&amp;sk-&gt;sk_rmem_alloc) &lt; prot-&gt;sysctl_rmem[<span class="number">0</span>])</span><br><span class="line">        <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line"></span><br><span class="line">&#125; <span class="keyword">else</span> &#123; <span class="comment">/* SK_MEM_SEND */</span></span><br><span class="line">    <span class="keyword">if</span> (sk-&gt;<span class="keyword">sk_t</span>ype == SOCK_STREAM) &#123;</span><br><span class="line">        <span class="keyword">if</span> (sk-&gt;sk_wmem_queued &lt; prot-&gt;sysctl_wmem[<span class="number">0</span>])</span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (atomic_read(&amp;sk-&gt;sk_wmem_alloc) &lt;</span><br><span class="line">           prot-&gt;sysctl_wmem[<span class="number">0</span>])</span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p><strong>注：</strong><br>sysctl_tcp_wmem[1]和sysctl_tcp_rmem[1]是一个socket读写缓存大小的初始值，在<code>tcp_init_sock</code>。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">sk-&gt;sk_sndbuf = <span class="keyword">sysctl_t</span>cp_wmem[<span class="number">1</span>];</span><br><span class="line">sk-&gt;sk_rcvbuf = <span class="keyword">sysctl_t</span>cp_rmem[<span class="number">1</span>];</span><br></pre></td></tr></table></figure></p>
+<p>sysctl_tcp_wmem[2]和sysctl_tcp_rmem[2]是一个socket的读写缓存扩展时的最大值。</p>
+<h2 id="pressure模式下最后判断">pressure模式下最后判断</h2><p>执行到这里，一定在pressure模式，这时需要一个公平性判断，即虽然整个内存很大了，但是这个socket占用的不足平均数，仍可以分配。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">alloc = sk_sockets_allocated_read_positive(sk);</span><br><span class="line"><span class="keyword">if</span> (sk_prot_mem_limits(sk, <span class="number">2</span>) &gt; alloc *</span><br><span class="line">    sk_mem_pages(sk-&gt;sk_wmem_queued +</span><br><span class="line">         atomic_read(&amp;sk-&gt;sk_rmem_alloc) +</span><br><span class="line">         sk-&gt;sk_forward_alloc))</span><br><span class="line">    <span class="keyword">return</span> <span class="number">1</span>;</span><br></pre></td></tr></table></figure></p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示sock]]>
+    </summary>
+    
+      <category term="linux内核" scheme="http://jangzq.info/tags/linux%E5%86%85%E6%A0%B8/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[自顶向下话socket之outputStream]]></title>
+    <link href="http://jangzq.info/2015/08/24/outputstream_write/"/>
+    <id>http://jangzq.info/2015/08/24/outputstream_write/</id>
+    <published>2015-08-24T13:42:51.000Z</published>
+    <updated>2015-08-24T13:52:56.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。<br>在本篇里讨论socket的outputStream的读操作。<br>在java中，使用<code>outputStream.write(b, 0, b.length)</code>发送数据，下面自顶向下进行讨论，在内核部分，关注的是开发网络程序及调优，密切相关的缓存、等待、时延相关的部分。</p>
+<h2 id="JDK实现">JDK实现</h2><p>最终调用到本地方法<code>Java_java_net_SocketOutputStream_socketWrite0</code>，在其中调用<code>NET_Send</code>发送，即使用blocking io wrapper里的NET_Send，保证关闭的时候，不至于退出不了，详情见<a href="http://jangzq.info/2015/08/06/jdk_linux_close/">自顶向下话socket之blocking io wrapper</a>， 在其中调用的是send系统调用。</p>
+<h2 id="linux内核实现">linux内核实现</h2><h3 id="主要流程">主要流程</h3><p>同connect，send系统调用，最终调用的是tcp proto的tcp_sendmsg方法，现在介绍这个方法的主要部分。</p>
+<ol>
+<li>首先检查socket是否被关闭了，或者存在错误，如果存在错误，则转到错误处理。这个说明了如果一个程序不停的发送数据，发送出错不一定会立刻发现，有可能在后面的发送中发现。</li>
+<li>得到当前的mss，计算时需要考虑SACKs和IP选项，以及PMTU发现事件。</li>
+<li><p>将数据拷贝到写缓冲区。</p>
+<ol>
+<li><p>如果输出队列（struct sock中的struct sk_buff_head sk_write_queue）中的最后一个sk_buff已经超过了mss，检查是否可以分配一个新的sk_buff，首先需要检查当前缓存的数据（sk-&gt;sk_wmem_queued）是否超过了发送缓存的大小（sk-&gt;sk_sndbuf），如果小于发送缓存大小，还需要判断要分配的内存是否超过了tcp协议的内存限制（另文描述），如果上述两个判断不满足，则需要等待（等待前需要把已经拷贝的数据发送），等待超时时间为SO_SNDTIMEO(如果是non-block，不需要等待），如果满足了，将新分配的sk_buff加入到输出队列。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!sk_stream_memory_free(sk))</span><br><span class="line">    <span class="keyword">goto</span> wait_for_sndbuf;</span><br><span class="line"></span><br><span class="line">skb = sk_stream_alloc_skb(sk,</span><br><span class="line">              select_size(sk, sg),</span><br><span class="line">              sk-&gt;sk_allocation);</span><br><span class="line"><span class="keyword">if</span> (!skb)</span><br><span class="line">    <span class="keyword">goto</span> wait_for_memory;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>将数据拷贝到skb中，先在线性区分配，如果线性区没有空间，则尝试在frag_list中分配，在这里不详细描述。</p>
+</li>
+</ol>
+</li>
+<li><p>检查是否需要立即发送，在<code>forced_push</code>方法里，当需要发送的数据，大于对方声明的最大窗口大小的一半时，需要立即发送。如果不需要立即发送，并且只有这一个skb，只发送当前的skb。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (forced_push(tp)) &#123;</span><br><span class="line">          tcp_mark_push(tp, skb);</span><br><span class="line">          <span class="keyword">__t</span>cp_push_pending_frames(sk, mss_now, TCP_NAGLE_PUSH);</span><br><span class="line">      &#125; <span class="keyword">else</span> <span class="keyword">if</span> (skb == tcp_send_head(sk))</span><br><span class="line">          tcp_push_one(sk, mss_now);</span><br></pre></td></tr></table></figure>
+<p>其中判断逻辑：</p>
+   <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">inline</span> <span class="keyword">bool</span> <span class="title">forced_push</span><span class="params">(<span class="keyword">const</span> <span class="keyword">struct</span> tcp_sock *tp)</span></span><br><span class="line"></span>&#123;   </span><br><span class="line">     <span class="keyword">return</span> after(tp-&gt;write_seq, tp-&gt;pushed_seq + (tp-&gt;max_window &gt;&gt; <span class="number">1</span>));</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h3 id="发生错误后的流程">发生错误后的流程</h3><p>当发生错误，比如等待内存超时，如果已经将部分数据拷贝到了发送缓冲，则请求发送这些数据，并且返回发送的字节数，请看do_error后的操作。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">out:</span><br><span class="line">    <span class="keyword">if</span> (copied)</span><br><span class="line">        tcp_push(sk, flags, mss_now, tp-&gt;nonagle, size_goal);</span><br><span class="line">out_nopush:</span><br><span class="line">    release_sock(sk);</span><br><span class="line">    <span class="keyword">return</span> copied + copied_syn;</span><br><span class="line"></span><br><span class="line">do_error:</span><br><span class="line">    <span class="keyword">if</span> (copied + copied_syn)</span><br><span class="line">        <span class="keyword">goto</span> out;</span><br></pre></td></tr></table></figure></p>
+<h3 id="nagle和cork">nagle和cork</h3><p>在这里，主要关注nagle和cork。nagle是标准协议，而cork是linux独有的，都是为了减少小包传输，减少网络负载，但是又有所不同，下面通过源码说明。<br>nagle协议默认开启，可以通过TCP_NODELAY关闭，cork可以通过TCP_CORK打开，在实现上都是保存在tcp_sock的nonagle属性。<br>判断是否应用nagle和cork协议的方法是：<code>tcp_nagle_test</code>，从中也可以看出两者的异同。这个方法如果返回true，则是允许发送这个包，声明为：<code>static inline bool tcp_nagle_test(const struct tcp_sock *tp, const struct sk_buff *skb, unsigned int cur_mss, int nonagle)</code>。</p>
+<ol>
+<li><p>首先如果nonagle参数包含TCP_NAGLE_PUSH，说明是调用者需要立即发送包，如nagle和cork的参数状态发生变化。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (nonagle &amp; TCP_NAGLE_PUSH)</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">true</span>;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果数据是urgent data，或者包含FIN，需要立即发送。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (tcp_urg_mode(tp) || (TCP_SKB_CB(skb)-&gt;tcp_flags &amp; TCPHDR_FIN))</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">true</span>;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>调用<code>tcp_nagle_check</code>判断。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!tcp_nagle_check(skb-&gt;len &lt; cur_mss, tp, nonagle))</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">true</span>;</span><br></pre></td></tr></table></figure>
+<p>此函数定义为：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">return</span> partial &amp;&amp;</span><br><span class="line">    ((nonagle &amp; TCP_NAGLE_CORK) ||</span><br><span class="line">     (!nonagle &amp;&amp; tp-&gt;packets_out &amp;&amp; tcp_minshall_check(tp)));</span><br></pre></td></tr></table></figure>
+<p>这个函数的返回值如果为true的时候，是不发送， 不发送的条件如下：<br>1）如果包不满，即小于mss, 并且设置了TCP_NAGLE_CORK，则不发送。<br>2）如果包不满，并且没有设置TCP_NODELAY，并且有包没有收到ack，则不发送。</p>
+</li>
+</ol>
+<p>从上文可以看出，cork比nagle严格，只要包不满，不管前面还有没有包没有收到ack，全都不发送，等着拼成大包，而nagle算法，如果前面的包都收到ack了，即使小包也发送，也就是当网络非常快的时候，还是会存在大量的小包。<br><strong>注</strong>：nagle和cork，在一段时间后，即使不符合条件，也会发送出去，这个时间一般为200或者300毫秒。</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示sock]]>
+    </summary>
+    
+      <category term="jdk" scheme="http://jangzq.info/tags/jdk/"/>
+    
+      <category term="linux内核" scheme="http://jangzq.info/tags/linux%E5%86%85%E6%A0%B8/"/>
+    
+  </entry>
+  
+  <entry>
+    <title><![CDATA[自顶向下话socket之inputStream]]></title>
+    <link href="http://jangzq.info/2015/08/24/inputstream_read/"/>
+    <id>http://jangzq.info/2015/08/24/inputstream_read/</id>
+    <published>2015-08-24T13:42:50.000Z</published>
+    <updated>2015-08-24T13:51:11.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。<br>在本篇里讨论socket的inputStream的读操作。</p>
+<h2 id="JDK实现">JDK实现</h2><p>socket.getInputStream().read调用的是本地方法<code>Java_java_net_SocketInputStream_socketRead0</code>.<br>如果设置了超时，则使用NET_Timeout来等待超时，或者可读，详细描述见<a href="http://jangzq.info/2015/08/06/jdk_linux_close/">自顶向下话socket之blocking io wrapper</a>，当超时或者出错，抛异常退出。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (timeout) &#123;</span><br><span class="line">    nread = NET_Timeout(fd, timeout);</span><br><span class="line">    ....</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>如果没超时或者出错，说明可读，这时调用<code>NET_Read</code>进行读数据操作，这里面调用的是recv系统调用。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">NET_ReadV</span><span class="params">(<span class="keyword">int</span> s, <span class="keyword">const</span> <span class="keyword">struct</span> iovec * <span class="built_in">vector</span>, <span class="keyword">int</span> count)</span> </span>&#123;</span><br><span class="line">    BLOCKING_IO_RETURN_INT( s, readv(s, <span class="built_in">vector</span>, count) );</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h2 id="内核实现">内核实现</h2><p>recv系统调用最终调用的是<code>tcp_recvmsg</code>函数，而涉及接收的操作，在两类上下文里执行。其一为软中断上下文，其一为进程上下文。当用户程序调用recv读取数据时，此时运行在进程上下文，而收到tcp包时，系统将包或拷贝到用户空间，或放入相关队列，供用户进程使用，这些操作执行在软中断上下文里，下面分别描述。</p>
+<h3 id="软中断上下文">软中断上下文</h3><p>在收到包后，网络软中断里调用<code>tcp_v4_rcv</code>，根据不同的情况处理接收到的包。</p>
+<ul>
+<li><p>如果socket上没有上锁，说明接收进程正在休眠等待，或者没有开始读取。在“休眠等待”的情况下，我们尝试把包放入prequeue队列，见<code>tcp_prequeue</code>。</p>
+<ol>
+<li><p>如果设置了<code>/proc/sys/net/ipv4/tcp_low_latency</code>，或者没有开始读取，返回。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (<span class="keyword">sysctl_t</span>cp_low_latency || !tp-&gt;ucopy.task)</span><br><span class="line"> <span class="keyword">return</span> <span class="keyword">false</span>;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>当prequeue队列里的内存大于接收缓存（<code>sk-&gt;sk_rcvbuf</code>），这时也调用<code>sk_backlog_rcv</code>处理prequeue队列里的skb。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (tp-&gt;ucopy.memory &gt; sk-&gt;sk_rcvbuf) &#123;</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">while</span> ((skb1 = __skb_dequeue(&amp;tp-&gt;ucopy.prequeue)) != NULL) &#123;</span><br><span class="line">        sk_backlog_rcv(sk, skb1);</span><br><span class="line">        .......</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    tp-&gt;ucopy.memory = <span class="number">0</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>当第一个skb放入prequeue队列时，唤醒等待的线程。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">else</span> <span class="keyword">if</span> (skb_queue_len(&amp;tp-&gt;ucopy.prequeue) == <span class="number">1</span>) &#123;</span><br><span class="line">    wake_up_interruptible_sync_poll(sk_sleep(sk),</span><br><span class="line">                   POLLIN | POLLRDNORM | POLLRDBAND);</span><br><span class="line">    <span class="keyword">if</span> (!inet_csk_ack_scheduled(sk))</span><br><span class="line">        <span class="keyword">inet_csk_reset_xmit_t</span>imer(sk, ICSK_TIME_DACK,</span><br><span class="line">                      (<span class="number">3</span> * tcp_rto_min(sk)) / <span class="number">4</span>,</span><br><span class="line">                      TCP_RTO_MAX);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+</li>
+<li><p>当socket上有锁，说明接收者正在处理，这时，将skb放入backlog队列，当<code>sk-&gt;sk_backlog.len + atomic_read(&amp;sk-&gt;sk_rmem_alloc) &gt; sk-&gt;sk_rcvbuf + sk-&gt;sk_sndbuf</code>时，丢弃这个包，释放内存返回。</p>
+</li>
+<li>在没有开始读取（主要是非阻塞的情况下），或者设置了<code>/proc/sys/net/ipv4/tcp_low_latency</code>的情况下，直接调用<code>tcp_v4_do_rcv</code>，在这里只关注在连接建立后，处理包的流程，这里的逻辑非常复杂，简而言之，就是将乱序的包放入out_of_order队列，如果是顺序的包，如果已经开始了数据直接拷贝，并且拷贝线程是本线程，直接内存拷贝，否则放入receive队列<code>sk-&gt;sk_receive_queue</code>，并检查out_of_order队列里是否有下一个包，放入receive队列。上述逻辑见<code>tcp_rcv_established</code>。</li>
+</ul>
+<h3 id="进程上下文">进程上下文</h3><p>在这里分析<code>tcp_recvmsg</code>函数，在这里只分析对我们编程有指导意义的部分。</p>
+<ul>
+<li>block模式的超时时间是由<code>SO_RCVTIMEO</code>决定的。</li>
+<li><p>目标读取数据量的确定。缺省情况下，只要读到了数据即返回，但这时有可能因为小包导致执行过多内核操作，所以在对数据协议清楚的情况下，调用recv时，flag可以设置MSG_WAITALL，一定读取到参数len才返回。另外socket option SO_RCVLOWAT参数也会起作用，如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">inline</span> <span class="keyword">int</span> <span class="title">sock_rcvlowat</span><span class="params">(<span class="keyword">const</span> <span class="keyword">struct</span> sock *sk, <span class="keyword">int</span> waitall, <span class="keyword">int</span> len)</span></span><br><span class="line"></span>&#123;</span><br><span class="line">    <span class="keyword">return</span> (waitall ? len : <span class="keyword">min_t</span>(<span class="keyword">int</span>, sk-&gt;sk_rcvlowat, len)) ? : <span class="number">1</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>将各种队列里的数据拷贝到用户空间。</p>
+<ol>
+<li>先处理receive队列，如果没有读到数据，直接返回-EAGAIN。</li>
+<li>处理prequeue队列，对于每个包，调用tcp_v4_do_rcv，见上文描述，见<code>tcp_prequeue_process</code>。</li>
+<li><p>如果是被唤醒的，则先处理prequeue队列， 即从下面的代码之下的部分。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (copied &gt;= target) &#123;</span><br><span class="line">    <span class="comment">/* Do not sleep, just process backlog. */</span></span><br><span class="line">    release_sock(sk);</span><br><span class="line">    lock_sock(sk);</span><br><span class="line">&#125; <span class="keyword">else</span></span><br><span class="line">    sk_wait_data(sk, &amp;timeo);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>由于在处理过程中，新来的包在backlog队列里，所以在<code>__release_sock</code>中遍历backlog队列，调用的还是tcp_v4_do_rcv。</p>
+</li>
+</ol>
+</li>
+</ul>
+<h2 id="总结">总结</h2><p>在整个过程中，涉及如下几个队列：receive队列、prequeue队列、backlog队列、out_of_order队列。其中，receive队列是存放顺序的包，已经具备拷贝到用户空间的条件，处理一个顺序包时（这个包可能是新读取的，也可能是处理别的队列缓存的包），如果目前没有读取（或者读取的不是本进程），则放入此队列，如果正在读取，则直接拷贝到用户空间。prequeue队列，当收到一个包时，有进程正在读此socket，并且处于阻塞等待，放入此队列，当进程被唤醒，继续执行时，首先处理这个队列。当收到一个包时，有的线程正在读取，则放到backlog队列时，当进程处理完，准备退出时处理这个队列的包。</p>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示sock]]>
+    </summary>
+    
+      <category term="jdk" scheme="http://jangzq.info/tags/jdk/"/>
+    
+      <category term="linux内核" scheme="http://jangzq.info/tags/linux%E5%86%85%E6%A0%B8/"/>
+    
+  </entry>
   
   <entry>
     <title><![CDATA[自顶向下话socket之connect超时]]></title>
@@ -791,435 +1197,6 @@
     </summary>
     
       <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
-    
-  </entry>
-  
-  <entry>
-    <title><![CDATA[分代内存管理之慢速路径内存分配]]></title>
-    <link href="http://jangzq.info/2015/07/26/GenCollectedHeap_allocate/"/>
-    <id>http://jangzq.info/2015/07/26/GenCollectedHeap_allocate/</id>
-    <published>2015-07-26T03:45:47.000Z</published>
-    <updated>2015-07-26T12:39:01.000Z</updated>
-    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>分代的内存管理使用GenCollectedHeap。generation的类如下：</p>
-<p><img src="/images/generation.png" alt="Generation"></p>
-<p>在这里我们主要剖析慢速路径使用的GenCollectedHeap::mem_allocate方法。其内存分配委托给了相应的CollectorPolicy实现。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">return</span> collector_policy()-&gt;mem_allocate_work(size,</span><br><span class="line">                                             <span class="keyword">false</span> <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                                             gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure>
-<p>所以，下面剖析GenCollectorPolicy::mem_allocate_work的实现。</p>
-<ul>
-<li><p>内存分配的逻辑在下列循环中，说明此方法只有两个出口，或者分配成功，或者抛出异常。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> try_count = <span class="number">1</span>; <span class="comment">/* return or throw */</span>; try_count += <span class="number">1</span>) </span><br><span class="line">&#123;</span><br><span class="line">	....</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>分代的内存管理，在Young generation里实现无锁的分配方式，从assert中可以看出，Young generation必须满足<code>supports_inline_contig_alloc</code>，即必须满足，在堆中必须有一块儿连续的空间，可用范围由top_addr()，end_addr()决定的，并且可以靠移动top_addr来分配内存。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">assert(gen0-&gt;supports_inline_contig_alloc(),</span><br><span class="line">      <span class="string">"Otherwise, must do alloc within heap lock"</span>);</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>接下来，在Young generation进行无锁分配。</p>
-<a id="more"></a>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (gen0-&gt;should_allocate(size, <span class="keyword">is_t</span>lab)) &#123;</span><br><span class="line">  result = gen0-&gt;par_allocate(size, <span class="keyword">is_t</span>lab);</span><br><span class="line">  <span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">    assert(gch-&gt;is_in_reserved(result), <span class="string">"result not in heap"</span>);</span><br><span class="line">    <span class="keyword">return</span> result;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p><strong>bool should_allocate(size_t word_size, bool is_tlab)</strong>：在这个generation中是否可以分配<code>word_size</code>大小的内存。<br><em>defNewGeneration及其子类</em><br>1、没有overflows，即没有超过size_t表示的范围。<br>2、如果设置了PretenureSizeThreshold，小于此值。</p>
-<p><em>其它</em><br>只判断是否overflows。</p>
-<p><strong>HeapWord* par_allocate(size_t word_size, bool is_tlab)</strong>: 在慢速路径分配时，提供不加锁分配内存的方式。<br><em>defNewGeneration</em>:<br>调用Eden区的par_allocate方法，使用cmpxchg方式修改top指针，分配内存。</p>
-</li>
-<li><p>如果上面没有分配成功，将使用有锁的慢速分配，这部分使用的是GenCollectedHeap::attempt_allocation方法。首先需要确认是否只在Young generation进行分配，如果只需在Young generation进行分配，那么当不能成功分配的时候，就进行GC，否则尝试在更老的Generation上分配，所以这个判断是很重要的。<br><strong>bool GenCollectorPolicy::should_try_older_generation_allocation(size_t word_size) const</strong>: 判断是否只在Young generation上进行分配。<br>满足下列三个条件之一，就需要在更老的Generation尝试。</p>
-<ol>
-<li>调用<code>gch-&gt;get_gen(0)-&gt;capacity_before_gc()</code>得到Young generation不用GC，最多能分配的内存大小，defNewGeneration及其子类，直接返回Eden的容量。即如果要分配的内存大于Eden的容量，则需要尝试next generation.</li>
-<li><code>GC_locker::is_active_and_needs_gc()</code>，即当前有jni方法在critical区域，并且有线程要求gc，这时如果只在Young generation分配，则势必需要GC，造成阻塞，所以需要尝试next generation.</li>
-<li><code>gch-&gt;incremental_collection_failed()</code>，即最近一次的incremental收集错误，也就是在Young generation层GC应该没有效果，所以需要尝试next generation.</li>
-</ol>
-<p>在GenCollectedHeap::attempt_allocation中，以此调用各个Generation的allocate方法进行分配。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"> <span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; _n_gens; i++) &#123;</span><br><span class="line">  <span class="keyword">if</span> (_gens[i]-&gt;should_allocate(size, <span class="keyword">is_t</span>lab)) &#123;</span><br><span class="line">    res = _gens[i]-&gt;allocate(size, <span class="keyword">is_t</span>lab);</span><br><span class="line">    <span class="keyword">if</span> (res != NULL) <span class="keyword">return</span> res;</span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> (first_only) <span class="keyword">break</span>;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>如果到此还没有分配成功，首先不要急于GC，如果<code>GC_locker::is_active_and_needs_gc()</code>，即当前有jni方法在critical区域，并且有线程要求gc，则进行如下处理。</p>
-<ol>
-<li>如果是要求在TLAB上分配，则直接返回NULL，调用者会尝试接下来的分配方式。</li>
-<li>使用<code>GenCollectedHeap::is_maximal_no_gc</code>得到各个generation是否没有达到最大设置，如果存在这样的generation，调用<code>GenCollectorPolicy::expand_heap_and_allocate</code>扩展并且分配。</li>
-<li>如果上一步没有分配成功，则等待处于critical的jni线程退出后，再次从头执行分配流程。<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!jthr-&gt;in_critical()) &#123;</span><br><span class="line">        <span class="function">MutexUnlocker <span class="title">mul</span><span class="params">(Heap_lock)</span></span>;</span><br><span class="line">        <span class="comment">// Wait for JNI critical section to be exited</span></span><br><span class="line">        GC_locker::stall_until_clear();</span><br><span class="line">        <span class="keyword">continue</span>;</span><br><span class="line">      &#125;</span><br></pre></td></tr></table></figure>
-</li>
-</ol>
-</li>
-<li><p>进行GC，并且同时分配。</p>
-<ol>
-<li><p>提交GC. </p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">VM_GenCollectForAllocation <span class="title">op</span><span class="params">(size,</span><br><span class="line">                            is_tlab,</span><br><span class="line">                            gc_count_before)</span></span>;</span><br><span class="line">VMThread::execute(&amp;op);</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>如果别的线程已经请求GC了，则从头执行分配流程重试。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (op.prologue_succeeded()) &#123;</span><br><span class="line">  result = op.result();</span><br><span class="line">  <span class="keyword">if</span> (op.gc_locked()) &#123;</span><br><span class="line">     assert(result == NULL, <span class="string">"must be NULL if gc_locked() is true"</span>);</span><br><span class="line">     <span class="keyword">continue</span>;  <span class="comment">// retry and/or stall as necessary</span></span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>如果执行完gc，但是花费了很多时间，才回收下很少内存，返回NULL，并且给<code>gc_overhead_limit_was_exceeded</code>赋值。</p>
-</li>
-<li>gc并分配成功，返回结果。</li>
-</ol>
-</li>
-</ul>
-]]></content>
-    <summary type="html">
-    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>分代的内存管理使用GenCollectedHeap。generation的类如下：</p>
-<p><img src="/images/generation.png" alt="Generation"></p>
-<p>在这里我们主要剖析慢速路径使用的GenCollectedHeap::mem_allocate方法。其内存分配委托给了相应的CollectorPolicy实现。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">return</span> collector_policy()-&gt;mem_allocate_work(size,</span><br><span class="line">                                             <span class="keyword">false</span> <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                                             gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure>
-<p>所以，下面剖析GenCollectorPolicy::mem_allocate_work的实现。</p>
-<ul>
-<li><p>内存分配的逻辑在下列循环中，说明此方法只有两个出口，或者分配成功，或者抛出异常。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> try_count = <span class="number">1</span>; <span class="comment">/* return or throw */</span>; try_count += <span class="number">1</span>) </span><br><span class="line">&#123;</span><br><span class="line">	....</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>分代的内存管理，在Young generation里实现无锁的分配方式，从assert中可以看出，Young generation必须满足<code>supports_inline_contig_alloc</code>，即必须满足，在堆中必须有一块儿连续的空间，可用范围由top_addr()，end_addr()决定的，并且可以靠移动top_addr来分配内存。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">assert(gen0-&gt;supports_inline_contig_alloc(),</span><br><span class="line">      <span class="string">"Otherwise, must do alloc within heap lock"</span>);</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>接下来，在Young generation进行无锁分配。</p>]]>
-    
-    </summary>
-    
-      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
-    
-  </entry>
-  
-  <entry>
-    <title><![CDATA[通过解释器的new操作看内存分配]]></title>
-    <link href="http://jangzq.info/2015/07/05/new/"/>
-    <id>http://jangzq.info/2015/07/05/new/</id>
-    <published>2015-07-04T16:13:29.000Z</published>
-    <updated>2015-07-04T16:30:24.000Z</updated>
-    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
-<p>了解hotspot的内存分配流程，TemplateTable::_new方法是个比较好的入口，这个方法生成了供以后解释执行时使用的汇编代码。从这个方法入手，可以了解hotspot创建对象所需要的操作，对我们开发应用程序时，进行内存管理设计有很大的帮助。</p>
-<h2 id="概述">概述</h2><p>新建一个对象，有三种方式。</p>
-<ol>
-<li><p>在TLAB中分配<br>如果<code>UseTLAB</code>为真（缺省是true），就先进行TLAB分配，本部分的内容在<a href="http://jangzq.info/2015/06/28/tlab/">《HotSpot的TLAB实现解析》</a>一文里也进行了简单的说明，本文后面详细说明。</p>
-</li>
-<li><p>在shared eden中快速分配。<br>TLAB是eden中的每个线程自己使用的部分，shared eden就是共享的部分。当在TLAB中分配失败后，也就是TLAB中的内存大小不够时，就有可能在shared eden中分配。之所以是有可能，是需要满足以下的条件。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> <span class="keyword">bool</span> allow_shared_alloc =</span><br><span class="line">   Universe::heap()-&gt;supports_inline_contig_alloc() &amp;&amp; !CMSIncrementalMode</span><br></pre></td></tr></table></figure>
-</li>
-</ol>
-<p><code>supports_inline_contig_alloc</code>与具体的<code>CollectedHeap</code>有关，也就是必须满足，在堆中必须有一块儿连续的空间，可用范围由<code>top_addr()</code>，<code>end_addr()</code>决定的，并且可以靠移动<code>top_addr</code>来分配内存。<br><code>CMSIncrementalMode</code>是增量CMS模式，当设置了增量CMS模式时，不允许在share eden中快速分配。</p>
-<ol>
-<li>慢速路径<br>调用<code>InterpreterRuntime::_new</code>进行分配。当类没有解析或者初始化时，还有上面的两种分配方式都不成功的时候，进入慢速模式。</li>
-</ol>
-<h2 id="源码解析">源码解析</h2><a id="more"></a>
-<h3 id="得到类的大小">得到类的大小</h3><p>要分配内存，首先要知道大小，所以通过下面的操作得到类的大小。<br>首先判断这个类的符号连接在常量池里是否已经解析，没有解析的话，就不能走快速路径了。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">__ <span class="keyword">get_cpool_and_t</span>ags(rsi, rax); <span class="comment">//rsi指向了常量池地址，rax指向了常量池的tags。</span></span><br><span class="line"><span class="keyword">const</span> <span class="keyword">int</span> tags_offset = typeArrayOopDesc::header_size(T_BYTE) * wordSize;</span><br><span class="line">__ cmpb(Address(rax, rdx, Address::times_1, tags_offset),</span><br><span class="line">        JVM_CONSTANT_Class);</span><br><span class="line">__ jcc(Assembler::notEqual, slow_case);</span><br></pre></td></tr></table></figure></p>
-<p>得到instanceKlass，并且判断是否初始化，如果没有初始化，也不能走快速路径。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">__ movptr(rsi, Address(rsi, rdx,</span><br><span class="line">          Address::times_8, <span class="keyword">sizeof</span>(constantPoolOopDesc)));</span><br><span class="line"></span><br><span class="line"><span class="comment">// make sure klass is initialized &amp; doesn't have finalizer</span></span><br><span class="line"><span class="comment">// make sure klass is fully initialized</span></span><br><span class="line">__ cmpb(Address(rsi,</span><br><span class="line">                instanceKlass::init_state_offset()),</span><br><span class="line">        instanceKlass::fully_initialized);</span><br><span class="line">__ jcc(Assembler::notEqual, slow_case);</span><br></pre></td></tr></table></figure></p>
-<p>注：解析和初始化的概念请参考《java虚拟机规范》。<br>当分配的是普通类对象（非数组）时， 如果klass::_layout_helper为正数，这个值就是对象的大小。如果最低位为1的话，则说明不能应用快速路径。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// get instance_size in instanceKlass (scaled to a count of bytes)</span></span><br><span class="line"> __ movl(rdx,</span><br><span class="line">         Address(rsi,</span><br><span class="line">                 Klass::layout_helper_offset()));</span><br><span class="line"> <span class="comment">// test to see if it has a finalizer or is malformed in some way</span></span><br><span class="line"> __ testl(rdx, Klass::_lh_instance_slow_path_bit);</span><br><span class="line"> __ jcc(Assembler::notZero, slow_case);</span><br></pre></td></tr></table></figure></p>
-<p>经过以上步骤，对象的大小已经放在了rdx寄存器中，下面进行内存分配。</p>
-<h3 id="TLAB分配">TLAB分配</h3><p>如果<code>UseTLAB</code>为真（缺省是true），就先进行TLAB分配。<br>首先，尝试直接修改TLAB的当前指针分配。当前线程的TLAB当前待分配指针存放在<code>JavaThread</code>的<code>tlab_top_offset</code>属性里，而r15指向了当前线程的<code>JavaThread</code>，所以首先将其存放到rax里，然后加上前面得到的对象大小，得到如果在TLAB里分配，指针的位置。然后比较这个位置和当前tlab的最大指针，如果超出了这个位置，说明tlab里的空间不足以分配这个对象，否则移动tlab的当前指针。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">__ movptr(rax, Address(<span class="keyword">r15_t</span>hread, in_bytes(JavaThread::<span class="keyword">tlab_t</span>op_offset())));</span><br><span class="line"> __ lea(rbx, Address(rax, rdx, Address::times_1));</span><br><span class="line"> __ cmpptr(rbx, Address(<span class="keyword">r15_t</span>hread, in_bytes(JavaThread::tlab_end_offset())));</span><br><span class="line"> __ jcc(Assembler::above, allow_shared_alloc ? allocate_shared : slow_case);</span><br><span class="line"> __ movptr(Address(<span class="keyword">r15_t</span>hread, in_bytes(JavaThread::<span class="keyword">tlab_t</span>op_offset())), rbx);</span><br></pre></td></tr></table></figure></p>
-<p>从上面代码中可以看出，如果没空间，根据是否允许在share eden中快速分配，选择 allocate_shared，或者慢速路径。<br>如果设置了ZeroTLAB,则分配的内存已经全置为0了，就不需要初始化对象，只需要初始化header。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (ZeroTLAB) &#123;</span><br><span class="line">      <span class="comment">// the fields have been already cleared</span></span><br><span class="line">      __ jmp(initialize_header);</span><br><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">      <span class="comment">// initialize both the header and fields</span></span><br><span class="line">      __ jmp(initialize_object);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
-<h3 id="Shared_eden快速分配">Shared eden快速分配</h3><p>由于shared eden是共享的，所以不能直接移动指针分配，需要保护机制。在x86_64里，采用的是<code>cmpxchg</code>指令。<br>首先， 比较shared eden的当前指针+对象大小，是否超过了shared eden的范围，如果超过了，只好去慢速路径。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">__ lea(rbx, Address(rax, rdx, Address::times_1));</span><br><span class="line"> __ cmpptr(rbx, Address(RendAddr, <span class="number">0</span>));</span><br><span class="line"> __ jcc(Assembler::above, slow_case);</span><br></pre></td></tr></table></figure></p>
-<p>然后， 用cas修改当前指针的地址。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (os::is_MP()) &#123;</span><br><span class="line">    __ lock();</span><br><span class="line">&#125;</span><br><span class="line">__ cmpxchgptr(rbx, Address(RtopAddr, <span class="number">0</span>));</span><br><span class="line"></span><br><span class="line"><span class="comment">// if someone beat us on the allocation, try again, otherwise continue</span></span><br><span class="line">__ jcc(Assembler::notEqual, retry);</span><br></pre></td></tr></table></figure></p>
-<p><code>__ lock()</code>方法生成lock前缀， 然后使用<code>cmpxchg</code>，给当前top指针赋值。具体含义为：因为现在rax中存放的是根据当前的top地址计算的object的起始地址，rbx存放的是object的结束地址，当内存中的rtopaddr处的内容等于rax时，将rbx的内容存入内存的这个地方，否则的话，说明别的线程已经改了这个地址的内存，这时将内存此处的值放入rax，以上操作是原子的。当修改失败的时候，需要重试。</p>
-<h3 id="初始化对象和头">初始化对象和头</h3><p>初始化对象，即将对象全部清0。<br>初始化头，即初始化对象前面的oopDesc。</p>
-<h3 id="慢速分配">慢速分配</h3><p>入口为：<code>InterpreterRuntime::_new</code>。<br>首先，检查类是否已经解析和初始化，然后进入实质分配内存部分：<code>CollectedHeap::common_mem_allocate_noinit</code>。</p>
-<h4 id="TLAB分配-1">TLAB分配</h4><p>首先在tlab中分配。这里面可以扩展新的TLAB空间，《HotSpot的TLAB实现解析》里描述的比较详细，请参考。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (UseTLAB) &#123;</span><br><span class="line">  result = <span class="keyword">allocate_from_t</span>lab(klass, THREAD, size);</span><br><span class="line">  <span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">    assert(!HAS_PENDING_EXCEPTION,</span><br><span class="line">           <span class="string">"Unexpected exception, will result in uninitialized storage"</span>);</span><br><span class="line">    <span class="keyword">return</span> result;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
-<h4 id="CollectedHeap分配">CollectedHeap分配</h4><p>分配不成功，调用当前<code>CollectedHeap</code>的<code>mem_allocate</code>方法，这个是个虚函数，由具体的子类实现。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">result = Universe::heap()-&gt;mem_allocate(size,</span><br><span class="line">                                        &amp;gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure></p>
-<p>详细描述在另外单独文章描述，请关注<a href="http://jangzq.info/">Jangzq技术研究</a>。</p>
-<h4 id="内存溢出处理">内存溢出处理</h4><p>当还没有分配成功，这时就需要报告内存溢出。<br>详细描述在另外单独文章描述，请关注<a href="http://jangzq.info/">Jangzq技术研究</a>。</p>
-]]></content>
-    <summary type="html">
-    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
-<p>了解hotspot的内存分配流程，TemplateTable::_new方法是个比较好的入口，这个方法生成了供以后解释执行时使用的汇编代码。从这个方法入手，可以了解hotspot创建对象所需要的操作，对我们开发应用程序时，进行内存管理设计有很大的帮助。</p>
-<h2 id="概述">概述</h2><p>新建一个对象，有三种方式。</p>
-<ol>
-<li><p>在TLAB中分配<br>如果<code>UseTLAB</code>为真（缺省是true），就先进行TLAB分配，本部分的内容在<a href="http://jangzq.info/2015/06/28/tlab/">《HotSpot的TLAB实现解析》</a>一文里也进行了简单的说明，本文后面详细说明。</p>
-</li>
-<li><p>在shared eden中快速分配。<br>TLAB是eden中的每个线程自己使用的部分，shared eden就是共享的部分。当在TLAB中分配失败后，也就是TLAB中的内存大小不够时，就有可能在shared eden中分配。之所以是有可能，是需要满足以下的条件。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> <span class="keyword">bool</span> allow_shared_alloc =</span><br><span class="line">   Universe::heap()-&gt;supports_inline_contig_alloc() &amp;&amp; !CMSIncrementalMode</span><br></pre></td></tr></table></figure>
-</li>
-</ol>
-<p><code>supports_inline_contig_alloc</code>与具体的<code>CollectedHeap</code>有关，也就是必须满足，在堆中必须有一块儿连续的空间，可用范围由<code>top_addr()</code>，<code>end_addr()</code>决定的，并且可以靠移动<code>top_addr</code>来分配内存。<br><code>CMSIncrementalMode</code>是增量CMS模式，当设置了增量CMS模式时，不允许在share eden中快速分配。</p>
-<ol>
-<li>慢速路径<br>调用<code>InterpreterRuntime::_new</code>进行分配。当类没有解析或者初始化时，还有上面的两种分配方式都不成功的时候，进入慢速模式。</li>
-</ol>
-<h2 id="源码解析">源码解析</h2>]]>
-    
-    </summary>
-    
-      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
-    
-  </entry>
-  
-  <entry>
-    <title><![CDATA[垃圾收集框架：CollectedHeap和CollectorPolicy]]></title>
-    <link href="http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/"/>
-    <id>http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/</id>
-    <published>2015-07-03T14:10:27.000Z</published>
-    <updated>2015-07-05T11:38:10.000Z</updated>
-    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
-<p>hotspot的垃圾收集框架有两个主要的组成部分，其一是CollectedHeap、其一是CollectorPolicy。根据不同的启动参数，hotspot选择相应的Heap和Policy。<br>首先我们看一下类图，看一下有多少种CollectedHeap和CollectorPolicy。</p>
-<p><img src="/images/heap_policy.png" alt="类图"></p>
-<p>下面列出的是CollectorPolicy和CollectedHeap的关键属性和方法，我们以此来看一下Policy和Heap各自的特性。</p>
-<h2 id="CollectedHeap">CollectedHeap</h2><p>CollectedHeap是java堆在hotspot中的体现，根据垃圾收集算法的不同，具有不同类型的子类，CollectedHeap的主要功能是分配内存，在这个父类里实现的主要是分配的流程，包括TLAB、其它分配等。但是不负责真正的内存分配，因为内存是由其子类管理，所以只定义这些分配的抽象方法。</p>
-<p><strong>属性</strong><br><a id="more"></a></p>
-<ul>
-<li><p>MemRegion _reserved<br>描述地址空间中一块儿连续的区域，由子类负责初始化、使用。</p>
-</li>
-<li><p>uint _n_par_threads<br>并行线程数。</p>
-</li>
-<li><p>GCCause::Cause _gc_cause<br>GC原因</p>
-</li>
-<li><p>GCCause::Cause _gc_lastcause<br>最后一次的GC原因</p>
-</li>
-</ul>
-<p><strong>方法</strong></p>
-<ul>
-<li><p>virtual HeapWord* allocate_new_tlab(size_t size)<br>创建一个新的TLAB，在CollectedHeap中没有实现这个方法，由子类负责实现。</p>
-</li>
-<li><p>inline static HeapWord<em> allocate_from_tlab(KlassHandle klass, Thread</em> thread, size_t size);<br>从TLAB里分配内存，流程如下：<br>首先调用thread对象中的_tlab（类型为：ThreadLocalAllocBuffer）的allocate方法,在TLAB上分配内存，</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = thread-&gt;tlab().allocate(size)</span><br></pre></td></tr></table></figure>
-<p>  如果没有分配成功，调用<code>allocate_from_tlab_slow</code>分配。 </p>
-</li>
-<li><p>static HeapWord<em> allocate_from_tlab_slow(KlassHandle klass, Thread</em> thread, size_t size)<br>  首先判断本TLAB中剩余内存，是否大于可以浪费的内存limit，如果大于，则不能在TLAB中分配</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (thread-&gt;tlab().<span class="built_in">free</span>() &gt; thread-&gt;tlab().refill_waste_limit()) &#123;</span><br><span class="line">   thread-&gt;tlab().record_slow_allocation(size);</span><br><span class="line">   <span class="keyword">return</span> NULL;</span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure>
-<p>  否则，计算新的TLAB的大小，新分配一个TLAB，并且为了遍历对象，把原来分配TLAB没有使用的部分清0。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">size_t</span> <span class="keyword">new_t</span>lab_size = thread-&gt;tlab().compute_size(size);</span><br><span class="line">thread-&gt;tlab().clear_before_allocation();</span><br></pre></td></tr></table></figure>
-<p>  调用<code>allocate_new_tlab</code>分配了TLAB，如果设置了ZeroTLAB，还需要进行清0</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = Universe::heap()-&gt;<span class="keyword">allocate_new_t</span>lab(<span class="keyword">new_t</span>lab_size);</span><br><span class="line"><span class="keyword">if</span> (obj == NULL) &#123;</span><br><span class="line">  <span class="keyword">return</span> NULL;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> (ZeroTLAB) &#123;</span><br><span class="line">  Copy::<span class="keyword">zero_t</span>o_words(obj, <span class="keyword">new_t</span>lab_size);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>  在新的tlab上分配</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">thread-&gt;tlab().fill(obj, obj + size, <span class="keyword">new_t</span>lab_size);</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>inline static HeapWord* common_mem_allocate_noinit(KlassHandle klass, size_t size, TRAPS)<br>  分配对象内存。<br>  首先在tlab中分配。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (UseTLAB) &#123;</span><br><span class="line">  result = <span class="keyword">allocate_from_t</span>lab(klass, THREAD, size);</span><br><span class="line">  <span class="keyword">if</span> (result != NULL) &#123;</span><br><span class="line">    assert(!HAS_PENDING_EXCEPTION,</span><br><span class="line">           <span class="string">"Unexpected exception, will result in uninitialized storage"</span>);</span><br><span class="line">    <span class="keyword">return</span> result;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>  分配不成功，调用当前CollectedHeap的mem_allocate方法，这个是个虚函数，由具体的子类实现。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">result = Universe::heap()-&gt;mem_allocate(size,</span><br><span class="line">                                        &amp;gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure>
-</li>
-</ul>
-<ul>
-<li><p>inline static HeapWord* common_mem_allocate_init(KlassHandle klass, size_t size, TRAPS)<br>分配并初始化对象。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_mem_allocate_noinit(klass, size, CHECK_NULL);</span><br><span class="line">init_obj(obj, size);</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>inline static HeapWord* common_permanent_mem_allocate_noinit(size_t size, TRAPS)<br>在Perm段分配内存。<br>调用虚函数<code>permanent_mem_allocate</code>进行分配，这个函数由子类实现。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* result = Universe::heap()-&gt;permanent_mem_allocate(size);</span><br></pre></td></tr></table></figure>
-</li>
-</ul>
-<p>如果失败，报告oom。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">report_java_out_of_memory(<span class="string">"PermGen space"</span>);</span><br></pre></td></tr></table></figure></p>
-<ul>
-<li><p>inline static HeapWord* common_permanent_mem_allocate_init(size_t size, TRAPS)<br>在Perm段分配内存，并初始化。<br>调用common_permanent_mem_allocate_noinit，并初始化。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_permanent_mem_allocate_noinit(size, CHECK_NULL);</span><br><span class="line">init_obj(obj, size);</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>static oop Class_obj_allocate(KlassHandle klass, int size, KlassHandle real_klass, TRAPS)<br>  分配并且初始化class对象，即创建mirror class时使用。在jdk7里，class对象从PermGen移到了Heap里，可以通过-XX:+JavaObjectsInPerm，使其还在PermGen分配。</p>
-<p>  首先在合适位置分配内存</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (JavaObjectsInPerm) &#123;</span><br><span class="line">  obj = common_permanent_mem_allocate_init(size, CHECK_NULL);</span><br><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">  assert(ScavengeRootsInCode &gt; <span class="number">0</span>, <span class="string">"must be"</span>);</span><br><span class="line">  obj = common_mem_allocate_init(real_klass, size, CHECK_NULL);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>  初始化并且互相设置引用</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">post_allocation_setup_common(klass, obj);</span><br><span class="line">assert(Universe::is_bootstrapping() ||</span><br><span class="line">       !((oop)obj)-&gt;blueprint()-&gt;oop_is_array(), <span class="string">"must not be an array"</span>);</span><br><span class="line">NOT_PRODUCT(Universe::heap()-&gt;check_for_bad_heap_word_value(obj, size));</span><br><span class="line">oop mirror = (oop)obj;</span><br><span class="line"></span><br><span class="line">java_lang_Class::set_oop_size(mirror, size);</span><br><span class="line"></span><br><span class="line"><span class="comment">// Setup indirections</span></span><br><span class="line"><span class="keyword">if</span> (!real_klass.is_null()) &#123;</span><br><span class="line">  java_lang_Class::set_klass(mirror, real_klass());</span><br><span class="line">  real_klass-&gt;set_java_mirror(mirror);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>inline static oop obj_allocate(KlassHandle klass, int size, TRAPS)<br>分配对象内存，并初始化.</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_mem_allocate_init(klass, size, CHECK_NULL);</span><br><span class="line">post_allocation_setup_obj(klass, obj);</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>inline static oop array_allocate(KlassHandle klass, int size, int length, TRAPS)<br>分配数组内存，并初始化</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_mem_allocate_init(klass, size, CHECK_NULL);</span><br><span class="line">post_allocation_setup_array(klass, obj, length);</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>inline static oop array_allocate_nozero(KlassHandle klass, int size, int length, TRAPS)<br>分配数组内存，不初始化</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* obj = common_mem_allocate_noinit(klass, size, CHECK_NULL);</span><br><span class="line">((oop)obj)-&gt;set_klass_gap(<span class="number">0</span>);</span><br><span class="line">post_allocation_setup_array(klass, obj, length);</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>virtual HeapWord<em> mem_allocate(size_t size, bool</em> gc_overhead_limit_was_exceeded) = 0;<br>真实的分配内存，纯虚函数，由子类实现。</p>
-</li>
-<li><p>virtual HeapWord* permanent_mem_allocate(size_t size) = 0;<br>真实的分配Perm内存，纯虚函数，由子类实现。</p>
-</li>
-<li><p>virtual bool supports_inline_contig_alloc() const<br>必须满足，在堆中必须有一块儿连续的空间，可用范围由top_addr()，end_addr()决定的，并且可以靠移动top_addr来分配内存。由子类实现。</p>
-</li>
-<li><p>virtual HeapWord** top_addr() const<br>见supports_inline_contig_alloc</p>
-</li>
-<li><p>virtual HeapWord** end_addr() const<br>见supports_inline_contig_alloc</p>
-</li>
-<li><p>virtual void ensure_parsability(bool retire_tlabs)<br>在解析heap之前调用，在这个类里负责调用tlab的相关方法，剩下的由子类实现。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">  <span class="keyword">for</span> (JavaThread *thread = Threads::first(); thread; thread = thread-&gt;next()) &#123;</span><br><span class="line">     <span class="keyword">if</span> (<span class="keyword">use_t</span>lab) thread-&gt;tlab().make_parsable(<span class="keyword">retire_t</span><span class="built_in">labs</span>);</span><br><span class="line"><span class="preprocessor">#ifdef COMPILER2</span></span><br><span class="line">     <span class="comment">// The deferred store barriers must all have been flushed to the</span></span><br><span class="line">     <span class="comment">// card-table (or other remembered set structure) before GC starts</span></span><br><span class="line">     <span class="comment">// processing the card-table (or other remembered set).</span></span><br><span class="line">     <span class="keyword">if</span> (deferred) flush_deferred_store_barrier(thread);</span><br><span class="line"><span class="preprocessor">#<span class="keyword">else</span></span></span><br><span class="line">     assert(!deferred, <span class="string">"Should be false"</span>);</span><br><span class="line">     assert(thread-&gt;deferred_card_mark().is_empty(), <span class="string">"Should be empty"</span>);</span><br><span class="line"><span class="preprocessor">#<span class="keyword">endif</span></span></span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>virtual size_t unsafe_max_alloc() = 0;<br>返回在不触发垃圾收集和扩展的情况下，最大能分配的内存。</p>
-</li>
-<li><p>virtual bool supports_tlab_allocation()<br>是否支持TLAB.</p>
-</li>
-<li><p>virtual size_t tlab_capacity(Thread *thr)<br>TLAB可以使用的内存大小。</p>
-</li>
-<li><p>virtual size_t unsafe_max_tlab_alloc(Thread *thr) const<br>返回在不触发垃圾收集和扩展的情况下，最大能在TLAB分配的内存。</p>
-</li>
-<li><p>virtual void collect(GCCause::Cause cause) = 0<br>提供了垃圾收集的对外接口，供“System.gc”等调用。</p>
-</li>
-</ul>
-<h2 id="CollectorPolicy">CollectorPolicy</h2><p>CollectorPolicy及其子类用来定义垃圾收集的属性。</p>
-<p><strong>属性</strong><br>PermanentGenerationSpec *_permanent_generation</p>
-<blockquote>
-<p>PermanentGenerationSpec<br>size_t           _init_size<br>由PermSize参数决定，缺省为ScaleForWordSize(16<em>M)。<br>size_t           _max_size<br>由MaxPermSize参数决定，缺省为ScaleForWordSize(64</em>M)<br>size_t           _read_only_size<br>由SharedReadOnlySize参数决定，缺省为10M<br>size_t           _read_write_size<br>由SharedReadWriteSize参数确定，缺省13M<br>size_t           _misc_data_size<br>由SharedReadWriteSize参数确定，缺省5M<br>size_t           _misc_code_size<br>由SharedMiscCodeSize参数确定，缺省4M<br>bool             _enable_shared_spaces<br>在client模式下，如果是serial模式的垃圾收集。为了提高启动速度，和减少占用空间。如果jre是通过installer安装的，那么在安装的时候，installer会把一些核心的类，以一种内部格式的形式，dump到client/classes.jsa中，以后启动&gt;时，直接加载这个文件即可。如果不是用installer安装的，可以使用java -Xshare:dump生成，或者运行share模式时，自动生成。我们关注的是server模式，所以不多讨论。</p>
-</blockquote>
-<p>size_t _max_heap_byte_size<br>如果设置了-Xmx，则为设置值。<br>如果没有设置-Xmx，通过下列几步得到：</p>
-<ol>
-<li>MaxHeapSize最初的缺省值为：<code>ScaleForWordSize(96*M)</code><br>如果主机内存太小，小于<code>MaxHeapSize * MinRAMFraction(缺省为2）</code>，即大概为250m左右。 MaxHeapSize设置为<code>内存大小/MinRAMFraction</code>,即内存的一半。<br>如果不是内存太小的情况，设置为<code>phys_mem / MaxRAMFraction(缺省为4)</code>和 缺省的MaxHeapSize两者之中较大的。即为内存的四分之一，最小<code>ScaleForWordSize(96*M)</code>。</li>
-<li>如果使用UseCompressedOops，还需要考虑不能超过compressedOops能表示的地址范围，这个值大约30多G，所以一般没什么影响。</li>
-<li>如果按上述规则得到的值，小于设置的-Xms值，设置为-Xms的大小。</li>
-</ol>
-<p>size_t _initial_heap_byte_size<br>如果设置了-Xms，则为此值。<br>如果没有设置-Xms，则：设置为<code>内存大小/InitialRAMFraction(缺省为64)</code>，但是这个值不能小于<code>OldSize（缺省大小ScaleForWordSize(4*M)) + NewSize（缺省大小ScaleForWordSize(1*M))</code>,同时也不能大于前面计算的MaxHeapSize。</p>
-<p>size_t _min_heap_byte_size<br><code>OldSize（缺省大小ScaleForWordSize(4*M)) + NewSize（缺省大小ScaleForWordSize(1*M))</code></p>
-<p><strong>方法</strong><br>virtual GenRemSet* create_rem_set(MemRegion reserved, int max_covered_regions)<br>建立Remember Set。目前没有子类重新实现这个方法，都使用CollectorPolicy中的这个方法。<br>目前只处理CardTable实现方式，用于跨代指针处理。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">CardTableRS* res = <span class="keyword">new</span> CardTableRS(whole_heap, max_covered_regions);</span><br><span class="line"><span class="keyword">return</span> res;</span><br></pre></td></tr></table></figure></p>
-<p>virtual HeapWord<em> mem_allocate_work(size_t size,  bool is_tlab, bool</em> gc_overhead_limit_was_exceeded)<br>由子类实现，在描述各种收集方法时再描述。请关注<a href="http://jangzq.info/">Jangzq技术研究</a></p>
-<p>virtual HeapWord *satisfy_failed_allocation(size_t size, bool is_tlab)<br>由子类实现，在描述各种收集方法时再描述，请关注<a href="http://jangzq.info/">Jangzq技术研究</a></p>
-<h2 id="GC参数">GC参数</h2><p>gc参数对应的CollectorPolicy和CollectedHeap如下：</p>
-<table>
-<thead>
-<tr>
-<th>GC参数</th>
-<th>CollectorPolicy</th>
-<th>CollectedHeap</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>-XX:+UseSerialGC</td>
-<td>MarkSweepPolicy</td>
-<td>GenCollectedHeap</td>
-</tr>
-<tr>
-<td>-XX:+UseParNewGC</td>
-<td>MarkSweepPolicy</td>
-<td>GenCollectedHeap</td>
-</tr>
-<tr>
-<td>-XX:+UseConcMarkSweepGC -XX:+UseAdaptiveSizePolicy</td>
-<td>ASConcurrentMarkSweepPolicy</td>
-<td>GenCollectedHeap</td>
-</tr>
-<tr>
-<td>-XX:+UseConcMarkSweepGC</td>
-<td>ConcurrentMarkSweepPolicy</td>
-<td>GenCollectedHeap</td>
-</tr>
-<tr>
-<td>-XX:+UseG1GC</td>
-<td>G1CollectorPolicy</td>
-<td>G1CollectedHeap</td>
-</tr>
-</tbody>
-</table>
-]]></content>
-    <summary type="html">
-    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
-<p>hotspot的垃圾收集框架有两个主要的组成部分，其一是CollectedHeap、其一是CollectorPolicy。根据不同的启动参数，hotspot选择相应的Heap和Policy。<br>首先我们看一下类图，看一下有多少种CollectedHeap和CollectorPolicy。</p>
-<p><img src="/images/heap_policy.png" alt="类图"></p>
-<p>下面列出的是CollectorPolicy和CollectedHeap的关键属性和方法，我们以此来看一下Policy和Heap各自的特性。</p>
-<h2 id="CollectedHeap">CollectedHeap</h2><p>CollectedHeap是java堆在hotspot中的体现，根据垃圾收集算法的不同，具有不同类型的子类，CollectedHeap的主要功能是分配内存，在这个父类里实现的主要是分配的流程，包括TLAB、其它分配等。但是不负责真正的内存分配，因为内存是由其子类管理，所以只定义这些分配的抽象方法。</p>
-<p><strong>属性</strong><br>]]>
-    
-    </summary>
-    
-      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
-    
-  </entry>
-  
-  <entry>
-    <title><![CDATA[classpath中没用到的jar的影响]]></title>
-    <link href="http://jangzq.info/2015/07/02/classpath_jar/"/>
-    <id>http://jangzq.info/2015/07/02/classpath_jar/</id>
-    <published>2015-07-02T13:19:16.000Z</published>
-    <updated>2015-07-02T13:28:07.000Z</updated>
-    <content type="html"><![CDATA[<p>有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。<br>通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">jzfile *  ZIP_Put_In_Cache0(<span class="keyword">const</span> <span class="keyword">char</span> *name, ZFILE zfd, <span class="keyword">char</span> **pmsg, jlong lastModified, jboolean usemmap)</span><br></pre></td></tr></table></figure></p>
-<p>在这个方法里，调用<code>static jlong readCEN(jzfile *zip, jint knownTotal)</code>方法“读取”了zip的central directory部分，里面关键的一句为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">mappedAddr = mmap64(<span class="number">0</span>, zip-&gt;mlen, PROT_READ, MAP_SHARED, zip-&gt;zfd, (<span class="keyword">off64_t</span>) offset)</span><br></pre></td></tr></table></figure></p>
-<p>即：将zip的 central directory部分进行了文件映射。上文中“读取”两字，我加了引号，就是因为并不是真正的读取了这块儿内容，而是采用文件映射的方式，将文件的这部分内容映射进了内存空间。这个方法里有一处值得我们注意，即是用了MAP_SHARED参数，即这一块儿空间是和其他进程共享的。<br>在JDK6之前，map了这个jar文件，这样占用了大量的地址空间（并没有占用内存），所以改为只映射 central directory，因为 central directory中包含检索包含文件的全部信息。<br>通过pmap，我们可以看到内存映射：</p>
-<blockquote>
-<p>00007f7bb818a000  63960K ——-   [ anon ]<br>00007f7bbc00a000      8K r—s- axis-ant-1.2.1.jar<br>00007f7bbc00c000      8K r—s- asm-attrs.jar<br>00007f7bbc00e000     20K r—s- antlr-2.7.6rc1.jar<br>00007f7bbc013000     28K r—s- ant-1.4.1.jar<br>00007f7bbc01a000     52K r—s- acegi-security-1.0.7.jar<br>00007f7bbc027000     44K r—s- charsets.jar<br>00007f7bbc032000   5968K rw—-   [ anon ]<br>00007f7bbc606000   1788K r—s- rt.jar<br>00007f7bbc7c5000   5264K rw—-   [ anon ]</p>
-</blockquote>
-<p>通过上述分析，我们可以得到如下结论：</p>
-<ul>
-<li>classpath包含的jar，会把 central directory映射到内存中去，在load class时会进行访问，所以会占用内存。如果jar文件较多，而且比较大，也会占用不少空间。</li>
-<li>对于一台主机上的不同java进程，引用相同的jar，最好使用同一个文件，这样会共享同一块内存，减少内存占用。</li>
-</ul>
-]]></content>
-    <summary type="html">
-    <![CDATA[<p>有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。<br>通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。<br><figure class="highlight c"><table><tr><td c]]>
-    </summary>
-    
-      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
-    
-  </entry>
-  
-  <entry>
-    <title><![CDATA[HotSpot的TLAB实现解析]]></title>
-    <link href="http://jangzq.info/2015/06/28/tlab/"/>
-    <id>http://jangzq.info/2015/06/28/tlab/</id>
-    <published>2015-06-28T09:12:50.000Z</published>
-    <updated>2015-06-28T09:12:59.000Z</updated>
-    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>本文解析了TLAB的实现机制，最后讨论了如何利用TLAB机制，进行高效程序设计，如果你对原理不感兴趣，也请看下<strong>启示</strong>部分。</p>
-<p>内存分配是虚拟机最常见的操作之一，所以处理效率高低对整体性能有很大的影响。同时，虚拟机是一个多线程的运行环境，内存分配也不可避免的受到并发的制约，而锁又是造成性能下降的主因之一，即使使用CAS，对于如此频繁的操作也是巨大的性能负担。<br>一个自然而然的想法是将内存分为几个部分，每个线程只使用自己的内存区域，这样内存分配就不用进行同步，当然能达到较高的效率，TLAB就是这种想法的产物。每一个线程都有自己的一片内存区域，这片区域就叫<strong>TLAB(Thread Local alloc Buffer)</strong>，虚拟机的任务就是合理的分配TLAB的大小，使内存分配都尽量在TLAB中完成，以达到更高的效率。</p>
-<h2 id="TLAB机制解析">TLAB机制解析</h2><p>hotspot用Thread类（Thread.cpp，不是java类）来描述一个线程，在Thread类里有一个<code>ThreadLocalAllocBuffer _tlab</code>变量，表征这个线程的tlab。在ThreadLocalAllocBuffer 类里，有三个属性描述了tlab的范围及使用情况，<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* _start;      <span class="comment">//当前tlab的起始地址</span></span><br><span class="line">HeapWord* <span class="keyword">_t</span>op;        <span class="comment">//最后一次在tlab上分配内存后的指针位置。</span></span><br><span class="line">HeapWord* _end;       <span class="comment">//tlab的结束地址。</span></span><br></pre></td></tr></table></figure></p>
-<p>采用这样的方法，首先要考虑，给每个线程的TLAB分配多大空间。分配大了，别的线程又无法使用，造成了浪费；分配小了，剩余的空间不够分配的时候，还需要采用别的方式分配。每个线程需要分配的内存是不同的，有的线程需要分配的内存多，有的现场分配的内存少，给所有线程分配同样大小的TLAB空间显然是不适合的。另外，一个线程不同的时间可能有不同的内存要求，这段时间使用内存多，过一会儿又少了，所以给一个线程固定的TLAB空间显然也是不适合的。也就是，需要解决下面两个问题：1）一个线程的TLAB初始时分配多大。2）什么时候进行动态调整，调整成多大。本文将围绕这两个问题，深入hotspot源码，探究答案。</p>
-<h3 id="初始分配">初始分配</h3><a id="more"></a>
-<p>当一个线程刚刚创建的时候，虚拟机这个线程的行为习惯一无所知，所以需要给它分配一个初始值。最简单的情况是，在启动虚拟机的时候通过<code>TLABSize</code>参数进行指定，需要注意的是，这个参数指定的值，也就是这时候使用一次，以后的TLAB大小和这个值就无关了（见<code>ThreadLocalAllocBuffer::initial_desired_size</code>方法）。如果没有指定这个值，虚拟机就需要自行决定给这个现场分配TLAB的大小了，显而易见，一个线程TLAB应该分配多少，和三个参数有关，一个是<strong>线程总数</strong>，线程越多，每个线程能分配的就越少；另一个参数就是<strong>可供分配的总空间</strong>；不可能把所有的可分配的空间都分配给线程做TLAB，如果这样分配，当一个线程的TLAB不够分配的时候，又没有别的适合分配的空间，势必造成gc，导致别的线程没有使用的TLAB造成了浪费，所以最后一个参数是<strong>每次分配的比例</strong>，这个比例越大，当gc时候，没使用的造成的浪费就越大。这里有一个例外情况，当这个线程是主线程的时候，这个时候heap还没有创建，所以hotspot给它分配了一个缺省值2K，这个值可以由启动参数<code>MinTLABSize</code>指定（见<code>ThreadLocalAllocBuffer::initial_desired_size</code>方法）。<br>当线程不是主线程的时候，就需要结合上面提到的三个参数，确定合适的值。首要问题是这两个值怎么得到，下面首先讨论线程数。由于TLAB分配后要使用一段时间，所以使用当时的线程数是没有意义的，所以在hotspot中，使用的线程数是一种自适应的加权平均的线程数（<code>GlobalTLABStats</code>的<code>_allocating_threads_avg</code>变量，类型是<code>AdaptiveWeightedAverage</code>）。hotspot在每次gc前，统计当前线程中从上次gc以来，曾经使用过TLAB的线程数，用这个线程数和过去得到的历史值进行一个加权平均，即<code>(100.0 - weight) * 历史平均值 / 100.0 + weight * 当前采样值 / 100.0</code>。公式中的weight由<code>TLABAllocationWeight</code>参数决定，如果不设置的话，缺省是35。（线程数的计算过程，见程序<code>ThreadLocalAllocBuffer::accumulate_statistics_before_gc</code>）。<br>第二个参数：可供分配的总空间，在hotspot中，调用<code>CollectedHeap</code>的<code>tlab_capacity</code>函数得到可供tlab分配的总空间，这个函数是一个虚函数，依赖于具体的实现。在采用分代的gc方法时，这个值是整个eden的大小（见<code>DefNewGeneration::tlab_capacity</code>）。<br>最后一个参数：一次分配的比例。在hotspot中通过eden可以浪费的百分比（Percentage of Eden that can be wasted）来指定，虚拟机参数为：<code>TLABWasteTargetPercent</code>。这个值缺省为1，即在gc的时候，已经分配给TLAB，还没有使用的内存，不应该超过eden的1%，所以一次分配eden的2%，当gc的时候，从概率上说，有一半的还没有用，所以浪费了1%，也就是说，一次分配的比例，应该是<code>TLABWasteTargetPercent*2</code>，在hotspot中，将<code>100/(TLABWasteTargetPercent*2）</code>称为<code>_target_refills</code>，即希望在<code>_target_refills</code>次分配后，分配完所有的空间，这个值仅是”期望“，并没有任何的硬性限制。<br>确定了三个参数后，一个线程最初分配的tlab的大小即：<code>可供分配的总空间/(线程数*_target_refills)</code>，在hotspot中，这个值叫做<code>desired_size</code>。（见<code>ThreadLocalAllocBuffer::initial_desired_size</code>方法）</p>
-<h3 id="动态调整">动态调整</h3><p>解决了线程TLAB初始分配的问题后，我看看看hotspot如何使用tlab，我们看的代码在：<code>CollectedHeap::common_mem_allocate_noinit</code>。其实，当hotspot用new指令生成对象的时候，通常情况下不会执行到这个方法，hotspot会使用快速分配，首先使用tlab，从当前的线程的tlab的<code>top</code>指针开始分配指定大小的内存，直接修改<code>top</code>指针即可，如果分配的内存大于当前tlab还剩下来的空间，则需要在eden上非tlab的空间进行分配，当然这个过程就需要使用CAS来保证（这个不是本文的研究内容，所以略过），当使用慢速分配或者分配数组的空间时，就会执行<code>CollectedHeap::common_mem_allocate_noinit</code>这个方法。在这个方法里，调用了<code>allocate_from_tlab</code>，顾名思义，即在Tlab上进行分配，只不过这个方法在TLAB空间不够的情况下，会分配新的TLAB空间。由于在Eden中，内存的分配是连续的，所以不能扩大一个已有的TLAB的大小，只有新建一个，这样还没有使用的内存就浪费了，所以并不是每次TLAB不够分配的时候，都会分配新的TLAB，在hotspot中，会查看TLAB剩余的大小，是否小于一个阈值，如果大于这个阈值，那么就不会新分配一个TLAB，而是不在TLAB分配内存，否则就新建一个TLAB。这个阈值由两个JDK参数控制: <code>TLABRefillWasteFraction</code>和<code>TLABWasteIncrement</code>，最初，等于<code>desired_size/TLABRefillWasteFraction</code>，<code>TLABRefillWasteFraction</code>缺省为64，当每一次不成功的分配，这个阈值增长<code>TLABWasteIncrement</code>，单位是<code>HeapWordSize</code>。在丢弃原来的TLAB时，调用<code>make_parsable</code>将剩余的空间填上对象，这个是便于gc时使用。</p>
-<p>在TLAB的设计中，处处体现了动态调整的思想。给每个线程分配的TLAB空间并不是一成不变的，这个调整的时机就是GC的时候。当GC后，hotspot会调整所有TLAB的大小，调整的依据当然是每个线程过去对于TLAB的使用情况，同上文中的“线程数”的计算思路一致，也是采用加权平均的方法。<code>ThreadLocalAllocBuffer</code>类的<code>_allocation_fraction</code>变量即代表了这个加权平均值，采样的是：线程的TLAB占所有已经使用的内存的比例（<code>ThreadLocalAllocBuffer::accumulate_statistics</code>）。具体实现细节就不需赘述了，请自行参考源代码(<code>ThreadLocalAllocBuffer::resize</code>)。</p>
-<h3 id="结论">结论</h3><p>可以看出，hotspot的TLAB实现中的各种手段，都是为了达到“尽量少的浪费空间”和“尽可能多在TLAB中分配”的平衡，如果一个线程的TLAB分配的空间过大，造成别的线程分配内存不够用，引起gc，造成了空间的浪费；如果分配的过小，造成在TLAB中无法分配，只能在share eden中分配，造成使用CAS等同步操作。所以hotspot采用一种自适应的方式，根据一个线程的过往行为，动态的调整其TLAB大小，力争达到最优的结果。</p>
-<h2 id="启示">启示</h2><p>首先，不讨论线程创建的开销，即使从TLAB的角度来看，频繁的生成短生命周期的线程是不可取的，因为hotspot费劲力气设计的“动态调整TLAB”算法，在这种情况下根本用不上，回回只能用初始的值，不能保证内存分配的效果。所以我们一定要使用接近固定的线程池。 其次，尽量的保证每个线程里的行为特征比较固定，让程序的行为能被jvm所侦知，否则基于统计的大小预测效果不会太好，造成大量的TLAB浪费，更加频繁的gc。最后，说句题外话，这应该是一切程序开发的准则，按照“底层依赖系统”期望你的行为去执行，才能达到最高效率，软硬都是如此，比如cpu的cache、比如cpu的指令预取，linux文件预读…….。如果辜负了“底层依赖系统”的期望，轻则效率低，重则踩坑，焉能不慎乎？</p>
-]]></content>
-    <summary type="html">
-    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>本文解析了TLAB的实现机制，最后讨论了如何利用TLAB机制，进行高效程序设计，如果你对原理不感兴趣，也请看下<strong>启示</strong>部分。</p>
-<p>内存分配是虚拟机最常见的操作之一，所以处理效率高低对整体性能有很大的影响。同时，虚拟机是一个多线程的运行环境，内存分配也不可避免的受到并发的制约，而锁又是造成性能下降的主因之一，即使使用CAS，对于如此频繁的操作也是巨大的性能负担。<br>一个自然而然的想法是将内存分为几个部分，每个线程只使用自己的内存区域，这样内存分配就不用进行同步，当然能达到较高的效率，TLAB就是这种想法的产物。每一个线程都有自己的一片内存区域，这片区域就叫<strong>TLAB(Thread Local alloc Buffer)</strong>，虚拟机的任务就是合理的分配TLAB的大小，使内存分配都尽量在TLAB中完成，以达到更高的效率。</p>
-<h2 id="TLAB机制解析">TLAB机制解析</h2><p>hotspot用Thread类（Thread.cpp，不是java类）来描述一个线程，在Thread类里有一个<code>ThreadLocalAllocBuffer _tlab</code>变量，表征这个线程的tlab。在ThreadLocalAllocBuffer 类里，有三个属性描述了tlab的范围及使用情况，<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* _start;      <span class="comment">//当前tlab的起始地址</span></span><br><span class="line">HeapWord* <span class="keyword">_t</span>op;        <span class="comment">//最后一次在tlab上分配内存后的指针位置。</span></span><br><span class="line">HeapWord* _end;       <span class="comment">//tlab的结束地址。</span></span><br></pre></td></tr></table></figure></p>
-<p>采用这样的方法，首先要考虑，给每个线程的TLAB分配多大空间。分配大了，别的线程又无法使用，造成了浪费；分配小了，剩余的空间不够分配的时候，还需要采用别的方式分配。每个线程需要分配的内存是不同的，有的线程需要分配的内存多，有的现场分配的内存少，给所有线程分配同样大小的TLAB空间显然是不适合的。另外，一个线程不同的时间可能有不同的内存要求，这段时间使用内存多，过一会儿又少了，所以给一个线程固定的TLAB空间显然也是不适合的。也就是，需要解决下面两个问题：1）一个线程的TLAB初始时分配多大。2）什么时候进行动态调整，调整成多大。本文将围绕这两个问题，深入hotspot源码，探究答案。</p>
-<h3 id="初始分配">初始分配</h3>]]>
-    
-    </summary>
-    
-      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
-    
-  </entry>
-  
-  <entry>
-    <title><![CDATA[overcommit_memory深入解析]]></title>
-    <link href="http://jangzq.info/2015/06/27/overcommit_memory/"/>
-    <id>http://jangzq.info/2015/06/27/overcommit_memory/</id>
-    <published>2015-06-27T15:32:52.000Z</published>
-    <updated>2015-06-28T09:14:03.000Z</updated>
-    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>本文从内核角度分析了内核参数<code>overcommit_memory</code>的影响，并给出了如何应用此参数的建议意见。</p>
-<h2 id="实例">实例</h2><p>首先，从一个实例开始：<br><strong>操作系统： </strong></p>
-<blockquote>
-<p>linux 2.6.38</p>
-</blockquote>
-<p><strong>JDK版本：</strong></p>
-<blockquote>
-<p>java version “1.6.0_30”<br>Java(TM) SE Runtime Environment (build 1.6.0_30-b12)<br>Java HotSpot(TM) 64-Bit Server VM (build 20.5-b03, mixed mode)</p>
-</blockquote>
-<p>现象：启动java进程的时候，报如下的错误后退出</p>
-<blockquote>
-<p>Error occurred during initialization of VM<br>Could not reserve enough space for object heap<br>Could not create the Java virtual machine.</p>
-</blockquote>
-<p>疑惑：粗略的考虑一下，linux是使用虚拟内存的，而且linux分配给进程内存时候，只是分配一个地址空间，并不是马上分配内存，那么是什么限制导致了java虚拟机在初始化的时候即退出呢?</p>
-<h2 id="解析">解析</h2><p>首先，我们看一下java虚拟机是用什么系统调用来请求内存？<br>java虚拟机使用-Xms 和-Xmx指出java的堆的初始大小和最大大小，在java进程启动的时候，java虚拟机按照初始大小请求内存，但是虚拟机是用什么来请求内存呢？我们使用strace来看一下（我们使用 -Xms1G -Xmx1G的参数启动）：<br>得到如下输出<br><a id="more"></a><br>[pid 15854] mmap(NULL, 1159725056, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0) = -1 ENOMEM (Cannot allocate memory)<br>从以上打印我们可以看出，java虚拟机是通过mmap系统调用来请求内存的，在这里返回了-1，即ENOMEM</p>
-<p>然后，我们看一下mmap的源代码，发现了在mm/mmap.c中的__vm_enough_memory方法中，判断了是否有足够内存，下面我们深入分析一下。<br>在这个函数中我们发现了导致此问题的内核参数:overcommit_memory，此参数在/proc下的文件为：/proc/sys/vm/overcommit_memory 。这个参数的解释如下：</p>
-<blockquote>
-<p>This file contains the kernel virtual memory accounting mode. Values are:<br>              0: heuristic overcommit (this is the default)<br>              1: always overcommit, never check<br>              2: always check, never overcommit</p>
-</blockquote>
-<p>检查一下这台机子上的配置，</p>
-<blockquote>
-<p>cat /proc/sys/vm/overcommit_memory<br>2 </p>
-</blockquote>
-<p>果然被设置成了2。<br>改成0后，再执行，确实就不在报错退出了。<br>我们下一步通过源码进一步分析一下各个参数值的含义。<br>当参数为1时，这时不检查，直接返回0（内存足够）<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (sysctl_overcommit_memory == OVERCOMMIT_ALWAYS)</span><br><span class="line">          <span class="keyword">return</span> <span class="number">0</span>;</span><br></pre></td></tr></table></figure></p>
-<p>当参数时0时，这时候先拿要请求页数和这个计算值比较：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">(global_page_state(NR_FILE_PAGES)+ nr_swap_pages+global_page_state(NR_SLAB_RECLAIMABLE))*<span class="number">31</span>/<span class="number">32</span></span><br></pre></td></tr></table></figure></p>
-<p>即：文件缓存所占的页数+空闲的swap page数量+可以回收的SLAB的空间，然后再留下3%供root使用。<br>如果请求页数小于这个计算值，则返回0，否则把上面的计算值再加上一个值，再比较，这个值是：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">（global_page_state(NR_FREE_PAGES) -totalreserve_pages）*<span class="number">31</span>/<span class="number">32</span></span><br></pre></td></tr></table></figure></p>
-<p>空闲的内存（页数）-需要保留的内存（必须保留备用的内存），再留下3%供root使用的。<br>通过上面的公式可以看出，在这个参数的情况下，操作系统就是看一下还可用的页（包括swap中和内存中的）是否能满足这次请求的内存，而不管别的进程是否已经请求了很大的内存。这实际是存在风险的，因为虚拟内存已经申请，只是暂时没用，等大家一起使用内存的时候，内存有可能不够用，就会造成OOM-killed进程来终止进程了。<br>为什么需要分以上两步，这是因为历史原因，在以前的版本，nr_free_pages()开销比较大，所以先比较第一步，如果第一步不能满足才比较第二步，2.6.38的代码中，这个函数也是直接取计数器的值了，所以开销应该不大了。</p>
-<p>当参数时2时，这时操作系统是拿所有进程请求的(commit)的内存，和一个阈值比较，这个阈值为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">（(totalram_pages - <span class="keyword">hugetlb_t</span>otal_pages()) * sysctl_overcommit_ratio / <span class="number">100</span>）*<span class="number">31</span>/<span class="number">32</span>+total_swap_pages</span><br></pre></td></tr></table></figure></p>
-<p>含义是：(所有的内存-大页面所占的内存)然后，乘上<code>sysctl_overcommit_ratio</code>设定的百分比，保留给root用的之后，加上swap的大小。<br>即：所有进程的虚拟内存申请量不能大于 所有内存（除去大页面内存）*<code>sysctl_overcommit_ratio</code>，在加上swap的大小。<code>sysctl_overcommit_ratio</code>这个名称现在似乎名不符实，是不是？</p>
-<h2 id="结论">结论</h2><p>这两个内核参数应当谨慎设置，以免引起不必要的麻烦。<br>1）在生产环境里，<code>overcommit_memory</code>尽量不要设置为1，这是因为这会大大增加OOM-killed的几率，增加了整个系统的不稳定性。<br>2）如果运行的应用程序的内存可以预测，如数据库，我们可以使用2，因为数据库启动后，将关键的所需内存全部申请了虚拟内存，所以可以防止在数据库主机上运行某些不重要的程序时，造成oom，导致数据库被kill，限制其它程序申请虚拟内存，还可以减少内存导入导出的可能性。<br>3）如果实在不能确定所需内存（我们尽量避免这种情况），就用0吧，但一定要考虑到oom的风险。</p>
-]]></content>
-    <summary type="html">
-    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>本文从内核角度分析了内核参数<code>overcommit_memory</code>的影响，并给出了如何应用此参数的建议意见。</p>
-<h2 id="实例">实例</h2><p>首先，从一个实例开始：<br><strong>操作系统： </strong></p>
-<blockquote>
-<p>linux 2.6.38</p>
-</blockquote>
-<p><strong>JDK版本：</strong></p>
-<blockquote>
-<p>java version “1.6.0_30”<br>Java(TM) SE Runtime Environment (build 1.6.0_30-b12)<br>Java HotSpot(TM) 64-Bit Server VM (build 20.5-b03, mixed mode)</p>
-</blockquote>
-<p>现象：启动java进程的时候，报如下的错误后退出</p>
-<blockquote>
-<p>Error occurred during initialization of VM<br>Could not reserve enough space for object heap<br>Could not create the Java virtual machine.</p>
-</blockquote>
-<p>疑惑：粗略的考虑一下，linux是使用虚拟内存的，而且linux分配给进程内存时候，只是分配一个地址空间，并不是马上分配内存，那么是什么限制导致了java虚拟机在初始化的时候即退出呢?</p>
-<h2 id="解析">解析</h2><p>首先，我们看一下java虚拟机是用什么系统调用来请求内存？<br>java虚拟机使用-Xms 和-Xmx指出java的堆的初始大小和最大大小，在java进程启动的时候，java虚拟机按照初始大小请求内存，但是虚拟机是用什么来请求内存呢？我们使用strace来看一下（我们使用 -Xms1G -Xmx1G的参数启动）：<br>得到如下输出<br>]]>
-    
-    </summary>
-    
-      <category term="linux内核" scheme="http://jangzq.info/tags/linux%E5%86%85%E6%A0%B8/"/>
     
   </entry>
   

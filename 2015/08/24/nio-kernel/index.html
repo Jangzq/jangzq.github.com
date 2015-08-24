@@ -1,0 +1,509 @@
+
+ <!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  
+    <title>java nio之内核篇 | Jangzq技术研究</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="Zhang Zq">
+    
+
+    
+    <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在本篇里，介绍了内核中epoll的相关实现，诸如epoll实例在内核中是怎么表示的，epoll_wait是怎么等待的， 文件上的就绪事件是怎么唤醒epoll_wait的，以及Level-triggered和edge-triggered怎么实现的，等等。在内核中，一个epoll实例由文件表示，具有一个文件描述符。epoll实例独有的信息">
+<meta property="og:type" content="article">
+<meta property="og:title" content="java nio之内核篇">
+<meta property="og:url" content="http://jangzq.info/2015/08/24/nio-kernel/index.html">
+<meta property="og:site_name" content="Jangzq技术研究">
+<meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在本篇里，介绍了内核中epoll的相关实现，诸如epoll实例在内核中是怎么表示的，epoll_wait是怎么等待的， 文件上的就绪事件是怎么唤醒epoll_wait的，以及Level-triggered和edge-triggered怎么实现的，等等。在内核中，一个epoll实例由文件表示，具有一个文件描述符。epoll实例独有的信息">
+<meta property="og:updated_time" content="2015-08-24T14:05:21.000Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="java nio之内核篇">
+<meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在本篇里，介绍了内核中epoll的相关实现，诸如epoll实例在内核中是怎么表示的，epoll_wait是怎么等待的， 文件上的就绪事件是怎么唤醒epoll_wait的，以及Level-triggered和edge-triggered怎么实现的，等等。在内核中，一个epoll实例由文件表示，具有一个文件描述符。epoll实例独有的信息">
+
+    
+    <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+</head>
+
+  <body>
+    <header>
+      
+<div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="Jangzq技术研究">Jangzq技术研究</a></h1>
+				<h2 class="blog-motto">关注代码的秘密， 记录探索点滴， 分享技术收获</h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="菜单">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">主页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于我</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="搜索" />
+						<input type="hidden" name="q" value="site:jangzq.info">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+  
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/08/24/nio-kernel/" title="java nio之内核篇" itemprop="url">java nio之内核篇</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-08-24T13:42:58.000Z" itemprop="datePublished"> 发表于 2015-08-24</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">文章目录</strong>
+		
+			<ol class="toc"><li class="toc-item toc-level-3"><a class="toc-link" href="#epoll_create"><span class="toc-number">1.</span> <span class="toc-text">epoll_create</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#epoll_ctl"><span class="toc-number">2.</span> <span class="toc-text">epoll_ctl</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#ep_insert"><span class="toc-number">2.1.</span> <span class="toc-text">ep_insert</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#ep_remove"><span class="toc-number">2.2.</span> <span class="toc-text">ep_remove</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#ep_modify"><span class="toc-number">2.3.</span> <span class="toc-text">ep_modify</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#epoll_wait"><span class="toc-number">3.</span> <span class="toc-text">epoll_wait</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#就绪通知"><span class="toc-number">4.</span> <span class="toc-text">就绪通知</span></a></li></ol>
+		
+		</div>
+		
+		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在本篇里，介绍了内核中epoll的相关实现，诸如epoll实例在内核中是怎么表示的，epoll_wait是怎么等待的， 文件上的就绪事件是怎么唤醒epoll_wait的，以及Level-triggered和edge-triggered怎么实现的，等等。<br>在内核中，一个epoll实例由文件表示，具有一个文件描述符。epoll实例独有的信息，由eventpoll结构体描述，存放于文件描述符的private_data变量中。这个结构体关键变量如下：<br>struct rb_root rbr：使用epoll_ctl添加到epoll实例的的文件，都存在一个epitem结构体，使用红黑树保存到这个变量中。<br>wait_queue_head_t wq：使用epoll_wait等待队列。</p>
+<p>对于每一个监视文件，用一个struct epitem表示，包含如下关键属性：<br>struct list_head fllink：用这个变量把epitem连接到struct file的f_ep_links链表中，这样从struct file中就可以遍历所有相关epoll实例，在关闭文件的时候，可以使用这个链表取消这些监视。<br>struct list_head rdllink：用这个变量将epitem连接到就绪队列（eventpoll-&gt;rdllist)。</p>
+<h3 id="epoll_create">epoll_create</h3><p>epoll_create的实现如下，从中可以看出size参数只要是正数，具体值无所谓。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">SYSCALL_DEFINE1(epoll_create, <span class="keyword">int</span>, size)</span><br><span class="line">&#123;</span><br><span class="line">    <span class="keyword">if</span> (size &lt;= <span class="number">0</span>)</span><br><span class="line">        <span class="keyword">return</span> -EINVAL;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> sys_epoll_create1(<span class="number">0</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>在epoll_create1中，可以看出主要操作为：</p>
+<ol>
+<li><p>创建并初始化一个eventpoll结构体。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">error = ep_alloc(&amp;ep);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>分配一个epoll类型的文件，并把eventpoll放在private_data成员变量里，并分配fd，建立fd和文件的映射，从中可以看出epoll也受打开文件数目的限制。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">file = anon_inode_getfile(<span class="string">"[eventpoll]"</span>, &amp;eventpoll_fops, ep,</span><br><span class="line">             O_RDWR | (flags &amp; O_CLOEXEC));</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h3 id="epoll_ctl">epoll_ctl</h3><p>首先在保存epitem的红黑树中，查找需要监视的文件，然后再根据操作的不同，进行判断，即在EPOLL_CTL_ADD的情况下，如果存在是错误的，对于其他情况，不存在是错误的。然后根据操作，调用不同的方法。<br><strong>注：</strong>另外，从这段代码可以看出， POLLERR和POLLHUP是必须监视的，如下：<br>  <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">case</span> EPOLL_CTL_ADD:</span><br><span class="line">    <span class="keyword">if</span> (!epi) &#123;</span><br><span class="line">        epds.events |= POLLERR | POLLHUP;</span><br><span class="line">        error = ep_insert(ep, &amp;epds, tf.file, fd, full_check);</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="ep_insert">ep_insert</h4><p>当操作为EPOLL_CTL_ADD时，调用的是<code>ep_insert</code>，主要步骤为：</p>
+<ol>
+<li>首先，检查当前epoll实例监视的文件数，不能超过<code>/proc/sys/fs/epoll/max_user_watches</code>。</li>
+<li>在eventpoll_epi slab cache中，分配epitem。</li>
+<li><p>向所监视的文件注册，调用的是struct file —-&gt; file_operations    <em>f_op —-&gt;`unsigned int (</em>poll) (struct file <em>, struct poll_table_struct </em>)`方法，凡是支持poll操作的文件，这个方法指针不为null，其中poll_table_struct结构体定义如下，其中poll_queue_proc是一个回调方法，在文件的poll方法里，使用这个回调函数，将本epitem信息加入到监视file的等待队列。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"> <span class="keyword">typedef</span> <span class="keyword">struct</span> <span class="keyword">poll_t</span>able_struct &#123;</span><br><span class="line">    poll_queue_proc _qproc;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> _key;</span><br><span class="line"> &#125; <span class="keyword">poll_t</span>able</span><br><span class="line"> ``` </span><br><span class="line">  在这里这个回调函数是`ep_ptable_queue_proc`，在文件的poll函数里，调用这个函数，其中`<span class="keyword">wait_queue_head_t</span> *whead`用来传入等待队列头，在`ep_ptable_queue_proc`函数里，构造了一个等待队列成员，加入到这个队列中，这个等待队列成员包含一个回调方法，需要唤醒等待队列成员时调用，这个函数是`ep_poll_callback`，这部分在后面详细描述。</span><br><span class="line"><span class="number">4.</span> 将epitem加入到监视file的f_ep_links里，并且插入红黑树。</span><br><span class="line">  ```<span class="function">c</span><br><span class="line"> <span class="title">list_add_tail_rcu</span><span class="params">(&amp;epi-&gt;fllink, &amp;tfile-&gt;f_ep_links)</span></span>;</span><br><span class="line">  ep_rbtree_insert(ep, epi);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果注册时返回值表明，现在已经ready了，就把此epitem连接到就绪队列（eventpoll-&gt;rdllist）。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> ((revents &amp; event-&gt;events) &amp;&amp; !ep_is_linked(&amp;epi-&gt;rdllink)) &#123;</span><br><span class="line">      <span class="keyword">list_add_t</span>ail(&amp;epi-&gt;rdllink, &amp;ep-&gt;rdllist);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果有进程正在调用epoll_wait等待，唤醒。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (waitqueue_active(&amp;ep-&gt;wq))</span><br><span class="line">          wake_up_locked(&amp;ep-&gt;wq);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h4 id="ep_remove">ep_remove</h4><p>当操作为EPOLL_CTL_DEL时，调用的是<code>ep_remove</code>，主要步骤为：</p>
+<ol>
+<li><p>从被监视文件的等待队列里删除。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ep_unregister_pollwait(ep, epi);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>从struct file的f_ep_links链表中删除。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">list_del_rcu(&amp;epi-&gt;fllink);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>从epoll实例的红黑表删除。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">rb_erase(&amp;epi-&gt;rbn, &amp;ep-&gt;rbr);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果ready队列里包含此epitem，删除。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (ep_is_linked(&amp;epi-&gt;rdllink))</span><br><span class="line">  list_del_init(&amp;epi-&gt;rdllink);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h4 id="ep_modify">ep_modify</h4><p>当操作为EPOLL_CTL_MOD时，调用的是<code>ep_modify</code>，主要步骤为：</p>
+<ol>
+<li><p>修改epitem中的事件属性。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">epi-&gt;event.events = event-&gt;events; <span class="comment">/* need barrier below */</span></span><br><span class="line">epi-&gt;event.data = event-&gt;data; <span class="comment">/* protected by mtx */</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>和新加时一样，调用监视文件的poll方法，不同的是，将本epitem信息加入到监视file的等待队列的回调函数为null，也就是得到当前是否有满足的事件，如果有的话，将自己加入到就绪队列，并唤醒等待队列。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">   init_poll_funcptr(&amp;pt, NULL);</span><br><span class="line">   revents = ep_item_poll(epi, &amp;pt);</span><br><span class="line">   ......</span><br><span class="line">   <span class="keyword">if</span> (revents &amp; event-&gt;events) &#123;</span><br><span class="line">     spin_lock_irq(&amp;ep-&gt;lock);</span><br><span class="line">     <span class="keyword">if</span> (!ep_is_linked(&amp;epi-&gt;rdllink)) &#123;</span><br><span class="line">        <span class="keyword">list_add_t</span>ail(&amp;epi-&gt;rdllink, &amp;ep-&gt;rdllist);</span><br><span class="line">        ep_pm_stay_awake(epi);</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Notify waiting tasks that events are available */</span></span><br><span class="line">        <span class="keyword">if</span> (waitqueue_active(&amp;ep-&gt;wq))</span><br><span class="line">            wake_up_locked(&amp;ep-&gt;wq);</span><br><span class="line">        <span class="keyword">if</span> (waitqueue_active(&amp;ep-&gt;poll_wait))</span><br><span class="line">            pwake++;</span><br><span class="line">     &#125;</span><br><span class="line">     spin_unlock_irq(&amp;ep-&gt;lock);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h3 id="epoll_wait">epoll_wait</h3><ol>
+<li>首先，确定超时时间，当timeout小于0时，无限等待，等于0时，立即返回，正数代表等待的毫秒数。</li>
+<li><p>当没有就绪的事件时，把自己加入到epoll实例的等待队列中，然后开始等待，直到有就绪的事件，或者超时，或者收到信号。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line">init_waitqueue_entry(&amp;wait, current);</span><br><span class="line">__add_wait_queue_exclusive(&amp;ep-&gt;wq, &amp;wait);</span><br><span class="line">......</span><br><span class="line"><span class="keyword">for</span> (;;) &#123;</span><br><span class="line">    set_current_state(TASK_INTERRUPTIBLE);</span><br><span class="line">    <span class="keyword">if</span> (ep_events_available(ep) || timed_out)</span><br><span class="line">        <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">if</span> (signal_pending(current)) &#123;</span><br><span class="line">        res = -EINTR;</span><br><span class="line">        <span class="keyword">break</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    spin_unlock_irqrestore(&amp;ep-&gt;lock, flags);</span><br><span class="line">    <span class="keyword">if</span> (!schedule_hrtimeout_range(to, slack, HRTIMER_MODE_ABS))</span><br><span class="line">        timed_out = <span class="number">1</span>;</span><br><span class="line"></span><br><span class="line">    spin_lock_irqsave(&amp;ep-&gt;lock, flags);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>当退出等待后，见下面代码，首先将自己从等待队列删除，如果不是收到信号（!res），并且存在就绪事件（eavail），遍历就绪队列，将拷贝事件结果到用户空间，如果拷贝个数为0，并且没有超时，继续等待。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">__remove_wait_queue(&amp;ep-&gt;wq, &amp;wait);</span><br><span class="line">......</span><br><span class="line"><span class="keyword">if</span> (!res &amp;&amp; eavail &amp;&amp;</span><br><span class="line">  !(res = ep_send_events(ep, events, maxevents)) &amp;&amp; !timed_out)</span><br><span class="line">  <span class="keyword">goto</span> fetch_events;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>下面介绍遍历就绪队列，将事件拷贝到用户空间的函数<code>ep_send_events</code>，这个函数主要调用的是<code>ep_scan_ready_list</code>。</p>
+<ol>
+<li><p>一次性把就绪队列全部移到一个临时队列。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">spin_lock_irqsave(&amp;ep-&gt;lock, flags);</span><br><span class="line">list_splice_init(&amp;ep-&gt;rdllist, &amp;txlist);</span><br><span class="line">ep-&gt;ovflist = NULL;</span><br><span class="line">spin_unlock_irqrestore(&amp;ep-&gt;lock, flags);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>调用传入的方法将事件拷贝到用户空间，在这里为：ep_send_events_proc。<br>遍历上一步的就绪队列，处理的最大个数即传入的maxevents。对于每一个就绪队列上的epitem，调用注册文件上的poll方法，得到目前存在的就绪事件，将事件拷贝到用户空间, 如果出错，再放回就绪队列。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">     <span class="keyword">for</span> (eventcnt = <span class="number">0</span>, uevent = esed-&gt;events;</span><br><span class="line">        !list_empty(head) &amp;&amp; eventcnt &lt; esed-&gt;maxevents;) &#123;</span><br><span class="line">       epi = list_first_entry(head, <span class="keyword">struct</span> epitem, rdllink);</span><br><span class="line">       .......</span><br><span class="line">       list_del_init(&amp;epi-&gt;rdllink);</span><br><span class="line">revents = ep_item_poll(epi, &amp;pt);</span><br><span class="line">        <span class="keyword">if</span> (revents) &#123;</span><br><span class="line">           <span class="keyword">if</span> (__put_user(revents, &amp;uevent-&gt;events) ||</span><br><span class="line">               __put_user(epi-&gt;event.data, &amp;uevent-&gt;data)) &#123;</span><br><span class="line">          list_add(&amp;epi-&gt;rdllink, head);</span><br><span class="line">               ep_pm_stay_awake(epi);</span><br><span class="line">               <span class="keyword">return</span> eventcnt ? eventcnt : -EFAULT;</span><br></pre></td></tr></table></figure>
+<p>如果设置了EPOLLONESHOT，则设置<code>epi-&gt;event.events &amp;= EP_PRIVATE_BITS</code>，下次不触发。<br>如果没有设置edge trigger（说明level trigger是缺省的），即如果没有读完，或者没有操作，会一直通知。这是通过如下机制实现的，只要本次有需要通知的事件，处理完成后，仍然将本epitem挂到就绪队列，下次调用epoll_wait时，由于首先查看就绪队列，就会处理这个epitem，如果此epitem没有就绪事件，就不再挂回去。</p>
+ <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">else</span> <span class="keyword">if</span> (!(epi-&gt;event.events &amp; EPOLLET)) &#123;</span><br><span class="line">    <span class="keyword">list_add_t</span>ail(&amp;epi-&gt;rdllink, &amp;ep-&gt;rdllist);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>当上一步处理时，新来的就绪epitem保存在ep-&gt;ovflist里，这时，如果这些epitem不在就绪队列，将它们加入到就绪队列。</p>
+</li>
+<li>由于处理就绪队列时有处理个数限制，所以临时队列里可能有剩余未处理的epitem，将它们重新放回就绪队列。</li>
+<li>如果就绪队列不为空，唤醒等待队列。</li>
+</ol>
+<h3 id="就绪通知">就绪通知</h3><p>在这里，讲解如何通知epoll实例事件发生的。上文在ep_insert中，向目标文件注册时，在事件等待队列成员里设置了回调函数，当事件唤醒时，执行此函数，这个函数为：<code>ep_poll_callback</code>，首先讲解此函数，这个函数的主要功能就是如果这个epitem符合条件，加入到就绪队列，并唤醒等待在epoll_wait上的进程。</p>
+<ol>
+<li><p>如果设置了EPOLLONESHOT，在上文中设置了<code>EP_PRIVATE_BITS</code>,如果这种情况，直接跳过。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!(epi-&gt;event.events &amp; ~EP_PRIVATE_BITS))</span><br><span class="line">    <span class="keyword">goto</span> out_unlock;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果是不关心的事件，跳过</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (key &amp;&amp; !((<span class="keyword">unsigned</span> <span class="keyword">long</span>) key &amp; epi-&gt;event.events))</span><br><span class="line">    <span class="keyword">goto</span> out_unlock;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果不在就绪队列里，加入就绪队列。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!ep_is_linked(&amp;epi-&gt;rdllink)) &#123;</span><br><span class="line">    <span class="keyword">list_add_t</span>ail(&amp;epi-&gt;rdllink, &amp;ep-&gt;rdllist);</span><br><span class="line">    ep_pm_stay_awake_rcu(epi);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>唤醒等待在epoll_wait的进程。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (waitqueue_active(&amp;ep-&gt;wq))</span><br><span class="line"> wake_up_locked(&amp;ep-&gt;wq);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jdk/">jdk</a><a href="/tags/linux内核/">linux内核</a>
+  </div>
+
+</div>
+
+
+
+	<div class="article-share" id="share">
+	
+	  <div data-url="http://jangzq.info/2015/08/24/nio-kernel/" data-title="java nio之内核篇 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  </div>
+	
+	</div>
+
+
+</footer>
+
+   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+ <div class="prev" >
+ <a href="/2015/08/24/java_nio/" title="java nio之jdk篇">
+  <strong>上一篇：</strong><br/>
+  <span>
+  java nio之jdk篇</span>
+</a>
+</div>
+
+
+<div class="next">
+<a href="/2015/08/24/socket_accept/"  title="自顶向下话socket之accept">
+ <strong>下一篇：</strong><br/> 
+ <span>自顶向下话socket之accept
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="显示侧边栏"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">文章目录</strong>
+ 
+ <ol class="toc"><li class="toc-item toc-level-3"><a class="toc-link" href="#epoll_create"><span class="toc-number">1.</span> <span class="toc-text">epoll_create</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#epoll_ctl"><span class="toc-number">2.</span> <span class="toc-text">epoll_ctl</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#ep_insert"><span class="toc-number">2.1.</span> <span class="toc-text">ep_insert</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#ep_remove"><span class="toc-number">2.2.</span> <span class="toc-text">ep_remove</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#ep_modify"><span class="toc-number">2.3.</span> <span class="toc-text">ep_modify</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#epoll_wait"><span class="toc-number">3.</span> <span class="toc-text">epoll_wait</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#就绪通知"><span class="toc-number">4.</span> <span class="toc-text">就绪通知</span></a></li></ol>
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="隐藏侧边栏"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+<div class="tagslist">
+	<p class="asidetitle">标签</p>
+		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>14</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>11</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/jdk/" title="jdk">jdk<sup>8</sup></a></li>
+			
+		
+		</ul>
+</div>
+
+
+  <div class="linkslist">
+  <p class="asidetitle">友情链接</p>
+    <ul>
+        
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS 订阅</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	
+	<section class="info">
+		<p> Jangzq&#39;s blog <br/>
+			Focus on the secret of code!</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		<a href="http://weibo.com/Jangzq" target="_blank" class="icon-weibo" title="微博"></a>
+		
+		
+		<a href="https://github.com/Jangzq" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:zqzhangmail@163.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+			
+		
+
+		<p class="copyright">
+		Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Jacman">Jacman</a> © 2015 
+		
+		<a href="/about" target="_blank" title="Zhang Zq">Zhang Zq</a>
+		
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script src="/js/jquery.imagesloaded.min.js"></script>
+<script src="/js/gallery.js"></script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+  
+        getSize();
+        if (myWidth >= 1024) {
+          c.click();
+        }
+  
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else{
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  c.click(function(){
+    ta.css('display', 'block').addClass('fadeIn');
+  });
+  o.click(function(){
+    ta.css('display', 'none');
+  });
+  $(window).scroll(function(){
+    ta.css("top",Math.max(140,320-$(this).scrollTop()));
+  });
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#nothing"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="微信"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="微博"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+<!-- Analytics Begin -->
+
+
+
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3F435d1985a249fde8415798105b4f848b' type='text/javascript'%3E%3C/script%3E"));
+</script>
+
+
+
+<!-- Analytics End -->
+
+<!-- Totop Begin -->
+
+	<div id="totop">
+	<a title="返回顶部"><img src="/img/scrollup.png"/></a>
+	</div>
+	<script src="/js/totop.js"></script>
+
+<!-- Totop End -->
+
+<!-- MathJax Begin -->
+<!-- mathjax config similar to math.stackexchange -->
+
+
+<!-- MathJax End -->
+
+<!-- Tiny_search Begin -->
+
+<!-- Tiny_search End -->
+
+  </body>
+</html>

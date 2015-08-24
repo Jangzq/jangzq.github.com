@@ -1,0 +1,463 @@
+
+ <!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  
+    <title>java nio之jdk篇 | Jangzq技术研究</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="Zhang Zq">
+    
+
+    
+    <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+java nio包括buffer，channel, selector等，最核心的即是多路复用+非阻塞读写，在本篇里，只涉及和socket相关部分的实现。
+channelChannel类的继承关系如下（省略了channel读写相关的父类，如ReadableByteChannel等等）。通过上图，可以看出Socket相关的两个Channe">
+<meta property="og:type" content="article">
+<meta property="og:title" content="java nio之jdk篇">
+<meta property="og:url" content="http://jangzq.info/2015/08/24/java_nio/index.html">
+<meta property="og:site_name" content="Jangzq技术研究">
+<meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+java nio包括buffer，channel, selector等，最核心的即是多路复用+非阻塞读写，在本篇里，只涉及和socket相关部分的实现。
+channelChannel类的继承关系如下（省略了channel读写相关的父类，如ReadableByteChannel等等）。通过上图，可以看出Socket相关的两个Channe">
+<meta property="og:image" content="http://jangzq.info/images/nio-channel.jpeg">
+<meta property="og:image" content="http://jangzq.info/images/nio-selector.jpeg">
+<meta property="og:updated_time" content="2015-08-24T14:07:30.000Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="java nio之jdk篇">
+<meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+java nio包括buffer，channel, selector等，最核心的即是多路复用+非阻塞读写，在本篇里，只涉及和socket相关部分的实现。
+channelChannel类的继承关系如下（省略了channel读写相关的父类，如ReadableByteChannel等等）。通过上图，可以看出Socket相关的两个Channe">
+
+    
+    <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+</head>
+
+  <body>
+    <header>
+      
+<div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="Jangzq技术研究">Jangzq技术研究</a></h1>
+				<h2 class="blog-motto">关注代码的秘密， 记录探索点滴， 分享技术收获</h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="菜单">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">主页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于我</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="搜索" />
+						<input type="hidden" name="q" value="site:jangzq.info">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+  
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/08/24/java_nio/" title="java nio之jdk篇" itemprop="url">java nio之jdk篇</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-08-24T13:42:59.000Z" itemprop="datePublished"> 发表于 2015-08-24</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">文章目录</strong>
+		
+			<ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#channel"><span class="toc-number">1.</span> <span class="toc-text">channel</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#Selectable"><span class="toc-number">1.1.</span> <span class="toc-text">Selectable</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#interruptible"><span class="toc-number">1.2.</span> <span class="toc-text">interruptible</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Selector—多路复用"><span class="toc-number">2.</span> <span class="toc-text">Selector—多路复用</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#抽象实现"><span class="toc-number">2.1.</span> <span class="toc-text">抽象实现</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#register"><span class="toc-number">2.1.1.</span> <span class="toc-text">register</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#select"><span class="toc-number">2.1.2.</span> <span class="toc-text">select</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#unregister"><span class="toc-number">2.1.3.</span> <span class="toc-text">unregister</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#修改关注的事件"><span class="toc-number">2.1.4.</span> <span class="toc-text">修改关注的事件</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#epoll实现"><span class="toc-number">2.2.</span> <span class="toc-text">epoll实现</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#register-1"><span class="toc-number">2.2.1.</span> <span class="toc-text">register</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#select-1"><span class="toc-number">2.2.2.</span> <span class="toc-text">select</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#unregister-1"><span class="toc-number">2.2.3.</span> <span class="toc-text">unregister</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#修改关注的事件-1"><span class="toc-number">2.2.4.</span> <span class="toc-text">修改关注的事件</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#wakeup"><span class="toc-number">2.2.5.</span> <span class="toc-text">wakeup</span></a></li></ol></li></ol></li></ol>
+		
+		</div>
+		
+		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>java nio包括buffer，channel, selector等，最核心的即是多路复用+非阻塞读写，在本篇里，只涉及和socket相关部分的实现。</p>
+<h2 id="channel">channel</h2><p>Channel类的继承关系如下（省略了channel读写相关的父类，如ReadableByteChannel等等）。<br><img src="/images/nio-channel.jpeg" alt="Channel类图"><br>通过上图，可以看出Socket相关的两个Channel，需要具备两个特性：selectable和interruptible。</p>
+<h3 id="Selectable">Selectable</h3><p>selectable表示可以用来IO多路复用，在<code>AbstractSelectableChannel</code>中，保存着这个channel所有注册的SelectionKey（变量：SelectionKey[] keys），通过SelectionKey同Selector关联起来，当关闭channel时，使用这个信息，从Selector中关闭自己的监听, 表现Selectable的几个主要方法：<br><strong>public abstract int validOps()</strong><br>返回支持的操作。在ServerSocketChannel中为<code>return SelectionKey.OP_ACCEPT</code>，在SocketChannel中<code>return (SelectionKey.OP_READ | SelectionKey.OP_WRITE | SelectionKey.OP_CONNECT)</code>。</p>
+<p><strong>public abstract SelectionKey register(Selector sel, int ops, Object att) throws ClosedChannelException</strong><br>注册时调用的方法，将这个channel注册到指定的Selector中，关注的操作为ops，att为附件对象，当事件满足时，返回的SelectionKey里包含此对象。这个方法在AbstractSelectableChannel中实现。</p>
+<ol>
+<li><p>首先检查操作是否是自己关注的</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> ((ops &amp; ~validOps()) != <span class="number">0</span>)</span><br><span class="line">         <span class="keyword">throw</span> <span class="keyword">new</span> IllegalArgumentException();</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>检查channel是否已经设置成了非阻塞，如果是阻塞的，抛出异常退出。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (blocking)</span><br><span class="line">      <span class="keyword">throw</span> <span class="keyword">new</span> IllegalBlockingModeException();</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>在注册的SelectionKey（变量：SelectionKey[] keys）里查找这个Selector的对应SelectionKey，如果存在，更新其中的关注操作属性，否则调用Selector的register方法，将返回的SelectionKey保存在注册SelectionKey数组中。Selector的register方法后文介绍，这里提前说一句，在java nio中，当正在执行select阻塞，那么是无法注册新的事件的，这是因为两个操作使用同一个锁同步，在select时，进入这个锁没有退出。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">SelectionKey k = findKey(sel);</span><br><span class="line"><span class="keyword">if</span> (k != <span class="keyword">null</span>) &#123;</span><br><span class="line">    k.interestOps(ops);</span><br><span class="line">    k.attach(att);</span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">if</span> (k == <span class="keyword">null</span>) &#123;</span><br><span class="line">    <span class="comment">// New registration</span></span><br><span class="line">    <span class="keyword">synchronized</span> (keyLock) &#123;</span><br><span class="line">        <span class="keyword">if</span> (!isOpen())</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> ClosedChannelException();</span><br><span class="line">        k = ((AbstractSelector)sel).register(<span class="keyword">this</span>, ops, att);</span><br><span class="line">        addKey(k);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">return</span> k;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p><strong>public abstract SelectableChannel configureBlocking(boolean block) throws IOException</strong><br>设为阻塞或者非阻塞模式，在底层，使用fcntl方法进行设置。</p>
+<h3 id="interruptible">interruptible</h3><p>interruptible指的是，这个channel可以异步关闭或者interrupted，即当这个channel阻塞在一个io操作时，我们调用这个channel的close方法，会导致阻塞退出，并且抛出<code>AsynchronousCloseException</code>异常。另外，当阻塞的时候，当我们调用这个线程的interrupt()方法时，会导致阻塞退出，并且抛出ClosedByInterruptException，下面我们看看这是如何实现的，首先看<code>AbstractInterruptibleChannel</code>类。<br>在<code>AbstractInterruptibleChannel</code>类里，实现了begin和end方法，在所有阻塞操作时，都采用如下方式调用。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">boolean</span> completed = <span class="keyword">false</span>;</span><br><span class="line"><span class="keyword">try</span> &#123;</span><br><span class="line">    begin();</span><br><span class="line">    completed = ...;    <span class="comment">// Perform blocking I/O operation</span></span><br><span class="line">    <span class="keyword">return</span> ...;         <span class="comment">// Return result</span></span><br><span class="line">&#125; <span class="keyword">finally</span> &#123;</span><br><span class="line">    end(completed);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p><strong>protected final void begin()</strong><br>在begin操作里，调用<code>blockedOn(interruptor)</code>将一个Interruptible回调注册到当前线程，当我们调用此线程的interrupt()方法时，会回调Interruptible的interrupt方法，这个方法定义如下，即调用implCloseChannel方法。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title">interrupt</span><span class="params">(Thread target)</span> </span>&#123;</span><br><span class="line">      <span class="keyword">synchronized</span> (closeLock) &#123;</span><br><span class="line">          <span class="keyword">if</span> (!open)</span><br><span class="line">              <span class="keyword">return</span>;</span><br><span class="line">          open = <span class="keyword">false</span>;</span><br><span class="line">          interrupted = target;</span><br><span class="line">          <span class="keyword">try</span> &#123;</span><br><span class="line">              AbstractInterruptibleChannel.<span class="keyword">this</span>.implCloseChannel();</span><br><span class="line">          &#125; <span class="keyword">catch</span> (IOException x) &#123; &#125;</span><br><span class="line">      &#125;</span><br><span class="line">  &#125;&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>通过上述定义可以看出，interrupt时的操作和close就一致了，下面我们看看close如何终结阻塞操作，相关操作和channel的类型有关，我们看一下ServerSocketChannel的实现,在<code>ServerSocketChannelImpl</code>里，<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">protected</span> <span class="keyword">void</span> <span class="title">implCloseSelectableChannel</span><span class="params">()</span> <span class="keyword">throws</span> IOException </span>&#123;</span><br><span class="line">    <span class="keyword">synchronized</span> (stateLock) &#123;</span><br><span class="line">        <span class="keyword">if</span> (state != ST_KILLED)</span><br><span class="line">            nd.preClose(fd);</span><br><span class="line">        <span class="keyword">long</span> th = thread;</span><br><span class="line">        <span class="keyword">if</span> (th != <span class="number">0</span>)</span><br><span class="line">            NativeThread.signal(th);</span><br><span class="line">        <span class="keyword">if</span> (!isRegistered())</span><br><span class="line">            kill();</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>通过上述实现可以看出，是向目标线程发送信号，导致阻塞退出，关于阻塞退出block，在前面文章介绍内核实现的时候，多次提到。<code>NativeThread.signal</code>在jdk里的实现是：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (pthread_kill((<span class="keyword">pthread_t</span>)thread, INTERRUPT_SIGNAL))</span><br><span class="line">    JNU_ThrowIOExceptionWithLastError(env, <span class="string">"Thread signal failed"</span>);</span><br></pre></td></tr></table></figure></p>
+<blockquote>
+<blockquote>
+<p>在ServerSocketChannel和SocketChannel中的connect， bind, listen等操作虽然进行了重新封装，但调用系统调用等和过去的socket操作基本一样，这里不再赘述。 在输入输出函数方面，nio中用ByteBuffer重新实现，在系统调用方面使用的是write/read，不同于过去的send/recv操作，但是在内核中，最终调用的代码是一样的。nio和过去的socket的io操作，一个显著的变化是nio中支持直接使用Direct Buffer，即堆外内存。</p>
+</blockquote>
+</blockquote>
+<h2 id="Selector—多路复用">Selector—多路复用</h2><p>Selector类的继承关系为：<br><img src="/images/nio-selector.jpeg" alt="Selector类图"></p>
+<h3 id="抽象实现">抽象实现</h3><p>在这里，讲解java nio对多路复用的抽象，即和具体实现如epoll，select等无关的部分。<br>在SelectorImpl中，有两个Set，分别对应于注册的事件（HashSet<selectionkey> keys），和就绪的事件（Set<selectionkey> selectedKeys），在返回给调用者时为了防止直接修改，进行了只读封装，即<code>publicKeys = Collections.unmodifiableSet(keys)</code>和<code>publicSelectedKeys = Util.ungrowableSet(selectedKeys)</code>。在这个类里，另外需要注意的是，register、selector、close都使用publicKeys同步，说明这几个操作是同步的，具体的实现都在子类里，在后文中，将看一下epll的实现。</selectionkey></selectionkey></p>
+<h4 id="register">register</h4><p><strong>protected final SelectionKey register(AbstractSelectableChannel ch,  int ops, Object attachment)</strong><br>这个方法是在Channel的regiser方法中调用的，在那里已经判断了不存在相应的SelectionKey，所以在这里新建一个SelectionKey对象，并调用子类的<code>implRegister</code>方法交给具体的实现去处理，然后，调用SelectionKey的interestOps方法关注事件。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">SelectionKeyImpl k = <span class="keyword">new</span> SelectionKeyImpl((SelChImpl)ch, <span class="keyword">this</span>);</span><br><span class="line">k.attach(attachment);</span><br><span class="line"><span class="keyword">synchronized</span> (publicKeys) &#123;</span><br><span class="line">    implRegister(k);</span><br><span class="line">&#125;</span><br><span class="line">k.interestOps(ops);</span><br></pre></td></tr></table></figure></p>
+<h4 id="select">select</h4><p><strong>public int select() throws IOException</strong><br>调用的是lockAndDoSelect。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">synchronized</span> (publicKeys) &#123;</span><br><span class="line">    <span class="keyword">synchronized</span> (publicSelectedKeys) &#123;</span><br><span class="line">        <span class="keyword">return</span> doSelect(timeout);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="unregister">unregister</h4><p>取消关注某一个文件，是调用SelectionKey的cancel方法，在这里面调用的<code>AbstractSelector</code>的<code>void cancel(SelectionKey k)</code>方法，如下：<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">cancel</span><span class="params">(SelectionKey k)</span> </span>&#123;                       <span class="comment">// package-private</span></span><br><span class="line">    <span class="keyword">synchronized</span> (cancelledKeys) &#123;</span><br><span class="line">        cancelledKeys.add(k);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>从中可以看出，并没有真正的取消，而是加到了一个cancel队列，留待以后处理，处理这个cancel队列的代码在<code>SelectorImpl</code>的<code>processDeregisterQueue</code>方法，这个方法在select操作（如select或者poll_wait）前后执行，比如在<code>EPollSelectorImpl</code>的<code>doSelect</code>中，就是如此实现：<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">processDeregisterQueue();</span><br><span class="line"><span class="keyword">try</span> &#123;</span><br><span class="line">    begin();</span><br><span class="line">    pollWrapper.poll(timeout);</span><br><span class="line">&#125; <span class="keyword">finally</span> &#123;</span><br><span class="line">    end();</span><br><span class="line">&#125;</span><br><span class="line">processDeregisterQueue();</span><br></pre></td></tr></table></figure></p>
+<p><code>processDeregisterQueue</code>方法即遍历cancle队列，依次调用<code>implDereg(SelectionKeyImpl ski)</code>，并清空cancel队列。</p>
+<h4 id="修改关注的事件">修改关注的事件</h4><p>调用的是<code>SelectionKeyImpl</code>的<code>SelectionKey interestOps(int ops)</code>方法，这个方法调用的是channel的<code>void translateAndSetInterestOps(int ops, SelectionKeyImpl sk)</code>方法，最终调用的是Selector的<code>void putEventOps(SelectionKeyImpl sk, int ops)</code>方法。</p>
+<h3 id="epoll实现">epoll实现</h3><p><strong>请先阅读“java nio之内核篇”</strong><br>java nio使用Selector来实现多路复用，在linux中采用的是epoll方式，实现类为<code>EPollSelectorImpl</code>， 在这部分分别介绍上一节里涉及到的操作。<br>在java中，使用<code>EPollArrayWrapper</code>封装了epoll实例，在构造函数里，调用了epoll_create方法，并且将返回的epoll实例文件描述符保存到成员变量<code>private final int epfd</code>中。</p>
+<h4 id="register-1">register</h4><p><strong>protected void implRegister(SelectionKeyImpl ski)</strong><br><code>EPollArrayWrapper</code>使用<code>private final byte[] eventsLow = new byte[MAX_UPDATE_ARRAY_SIZE]</code>和<code>private Map&lt;Integer,Byte&gt; eventsHigh</code>保存注册的文件事件，如果文件描述符小于MAX_UPDATE_ARRAY_SIZE，则存放在数组里，如果大于这个值，则存放在map里。在这个方法里，其实只是修改了其中的值。</p>
+<h4 id="select-1">select</h4><p><strong>protected int doSelect(long timeout) throws IOException</strong></p>
+<ol>
+<li>首先处理cancel队列，对于每一个SelectionKey调用<code>implDereg</code>。</li>
+<li>调用EPollArrayWrapper的poll方法，在其中调用epoll_wait。<br>首先，处理变化了关注事件的文件描述符，在EPollArrayWrapper中，使用<code>int[] updateDescriptors</code>记录了关注事件变化了的文件描述符，<code>BitSet registered</code>保存了文件描述符是否已经注册了，上文中提到的<code>eventsLow</code>和<code>eventsHigh</code>中存放着现在关注的事件，使用这些信息，可以判断出调用epoll_ctl时需要的操作，即EPOLL_CTL_ADD、EPOLL_CTL_MOD、EPOLL_CTL_DEL，然后调用epoll_ctl。<br>然后，调用epoll_wait，在EPollArrayWrapper初始化的时候，分配了一块儿堆外内存（AllocatedNativeObject pollArray），作为epoll_wait调用传出的epoll_event数组地址，其大小为NUM_EPOLLEVENTS * SIZE_EPOLLEVENT。<br>当epoll_wait返回后，判断是否被interrupt，后文详细描述。</li>
+<li>再次处理cancel队列，对于每一个SelectionKey调用<code>implDereg</code>。</li>
+<li>调用<code>updateSelectedKeys</code>，将堆外的epoll_event信息，保存到java的<code>Set&lt;SelectionKey&gt; selectedKeys</code>里，并且把就绪的操作，保存到其中的SelectionKey中。</li>
+</ol>
+<h4 id="unregister-1">unregister</h4><p><strong>protected void implDereg(SelectionKeyImpl ski) throws IOException</strong><br>其中，最主要的操作是调用EPollArrayWrapper的remove，首先把<code>eventsLow</code>和<code>eventsHigh</code>中对应文件的event设置为KILLED。如果文件已经注册了，直接调用epoll_ctl。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// kill pending and future update for this file descriptor</span></span><br><span class="line">setUpdateEvents(fd, KILLED, <span class="keyword">false</span>);</span><br><span class="line"></span><br><span class="line"><span class="comment">// remove from epoll</span></span><br><span class="line"><span class="keyword">if</span> (registered.get(fd)) &#123;</span><br><span class="line">    epollCtl(epfd, EPOLL_CTL_DEL, fd, <span class="number">0</span>);</span><br><span class="line">    registered.clear(fd);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="修改关注的事件-1">修改关注的事件</h4><p><strong>void putEventOps(SelectionKeyImpl ski, int ops)</strong><br>修改关注事件时候调用，主要进行两个操作，一个是修改<code>eventsLow</code>和<code>eventsHigh</code>，另一个是修改<code>int[] updateDescriptors</code>,这两个的作用前文已经描述了。</p>
+<h4 id="wakeup">wakeup</h4><p>当阻塞在epoll_wait时，可以通过此方法使其返回，在epoll的实现中，采用了如下方法。<br>在EPollSelectorImpl的构造函数里，新建了一个pipe，把这个管道的读写文件描述符，保存在<code>EPollArrayWrapper</code>的<code>incomingInterruptFD</code>，<code>outgoingInterruptFD</code>里，并且调用epoll_ctl关注incomingInterruptFD的读事件。<br><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">initInterrupt</span><span class="params">(<span class="keyword">int</span> fd0, <span class="keyword">int</span> fd1)</span> </span>&#123;</span><br><span class="line">    outgoingInterruptFD = fd1;</span><br><span class="line">    incomingInterruptFD = fd0;</span><br><span class="line">    epollCtl(epfd, EPOLL_CTL_ADD, fd0, EPOLLIN);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>这样，当我们向管道里写数据的时候，则就会将epoll_wait退出等待，在调用wakeUp时，调用的本地方法如下，即向管道里写入一个字节的数据。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">Java_sun_nio_ch_EPollArrayWrapper_interrupt(JNIEnv *env, jobject <span class="keyword">this</span>, jint fd)</span><br><span class="line">&#123;</span><br><span class="line">    <span class="keyword">int</span> fakebuf[<span class="number">1</span>];</span><br><span class="line">    fakebuf[<span class="number">0</span>] = <span class="number">1</span>;</span><br><span class="line">    <span class="keyword">if</span> (write(fd, fakebuf, <span class="number">1</span>) &lt; <span class="number">0</span>) &#123;</span><br><span class="line">        JNU_ThrowIOExceptionWithLastError(env,<span class="string">"write to interrupt fd failed"</span>);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p><strong>从上面可以看出，在java中一个Selector会占用3个文件描述符</strong>。<br>为什么不采用发送信号的方式使epoll_wait退出呢？这是因为从内核篇我们可以看出，如果收到信号，内核并不处理已经就绪的事件。</p>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jdk/">jdk</a><a href="/tags/linux内核/">linux内核</a>
+  </div>
+
+</div>
+
+
+
+	<div class="article-share" id="share">
+	
+	  <div data-url="http://jangzq.info/2015/08/24/java_nio/" data-title="java nio之jdk篇 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  </div>
+	
+	</div>
+
+
+</footer>
+
+   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+
+<div class="next">
+<a href="/2015/08/24/nio-kernel/"  title="java nio之内核篇">
+ <strong>下一篇：</strong><br/> 
+ <span>java nio之内核篇
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="显示侧边栏"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">文章目录</strong>
+ 
+ <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#channel"><span class="toc-number">1.</span> <span class="toc-text">channel</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#Selectable"><span class="toc-number">1.1.</span> <span class="toc-text">Selectable</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#interruptible"><span class="toc-number">1.2.</span> <span class="toc-text">interruptible</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Selector—多路复用"><span class="toc-number">2.</span> <span class="toc-text">Selector—多路复用</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#抽象实现"><span class="toc-number">2.1.</span> <span class="toc-text">抽象实现</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#register"><span class="toc-number">2.1.1.</span> <span class="toc-text">register</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#select"><span class="toc-number">2.1.2.</span> <span class="toc-text">select</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#unregister"><span class="toc-number">2.1.3.</span> <span class="toc-text">unregister</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#修改关注的事件"><span class="toc-number">2.1.4.</span> <span class="toc-text">修改关注的事件</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#epoll实现"><span class="toc-number">2.2.</span> <span class="toc-text">epoll实现</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#register-1"><span class="toc-number">2.2.1.</span> <span class="toc-text">register</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#select-1"><span class="toc-number">2.2.2.</span> <span class="toc-text">select</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#unregister-1"><span class="toc-number">2.2.3.</span> <span class="toc-text">unregister</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#修改关注的事件-1"><span class="toc-number">2.2.4.</span> <span class="toc-text">修改关注的事件</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#wakeup"><span class="toc-number">2.2.5.</span> <span class="toc-text">wakeup</span></a></li></ol></li></ol></li></ol>
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="隐藏侧边栏"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+<div class="tagslist">
+	<p class="asidetitle">标签</p>
+		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>14</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>11</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/jdk/" title="jdk">jdk<sup>8</sup></a></li>
+			
+		
+		</ul>
+</div>
+
+
+  <div class="linkslist">
+  <p class="asidetitle">友情链接</p>
+    <ul>
+        
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS 订阅</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	
+	<section class="info">
+		<p> Jangzq&#39;s blog <br/>
+			Focus on the secret of code!</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		<a href="http://weibo.com/Jangzq" target="_blank" class="icon-weibo" title="微博"></a>
+		
+		
+		<a href="https://github.com/Jangzq" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:zqzhangmail@163.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+			
+		
+
+		<p class="copyright">
+		Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Jacman">Jacman</a> © 2015 
+		
+		<a href="/about" target="_blank" title="Zhang Zq">Zhang Zq</a>
+		
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script src="/js/jquery.imagesloaded.min.js"></script>
+<script src="/js/gallery.js"></script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+  
+        getSize();
+        if (myWidth >= 1024) {
+          c.click();
+        }
+  
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else{
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  c.click(function(){
+    ta.css('display', 'block').addClass('fadeIn');
+  });
+  o.click(function(){
+    ta.css('display', 'none');
+  });
+  $(window).scroll(function(){
+    ta.css("top",Math.max(140,320-$(this).scrollTop()));
+  });
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#nothing"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="微信"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="微博"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+<!-- Analytics Begin -->
+
+
+
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3F435d1985a249fde8415798105b4f848b' type='text/javascript'%3E%3C/script%3E"));
+</script>
+
+
+
+<!-- Analytics End -->
+
+<!-- Totop Begin -->
+
+	<div id="totop">
+	<a title="返回顶部"><img src="/img/scrollup.png"/></a>
+	</div>
+	<script src="/js/totop.js"></script>
+
+<!-- Totop End -->
+
+<!-- MathJax Begin -->
+<!-- mathjax config similar to math.stackexchange -->
+
+
+<!-- MathJax End -->
+
+<!-- Tiny_search Begin -->
+
+<!-- Tiny_search End -->
+
+  </body>
+</html>

@@ -4,26 +4,29 @@
 <head>
   <meta charset="UTF-8">
   
-    <title>classpath中没用到的jar的影响 | Jangzq技术研究</title>
+    <title>自顶向下话socket之close | Jangzq技术研究</title>
     <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
     
     <meta name="author" content="Zhang Zq">
     
 
     
-    <meta name="description" content="有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。1jzfile *  ZIP_Put_In_Cache0(const char *name, ZFILE zfd, char **pmsg, jlong lastModified, jboolean usemmap)
-在这个方法里">
+    <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。在本篇将讨论socket的关闭。
+JDK实现socket.close方法，调用的本地方法Java_java_net_Pla">
 <meta property="og:type" content="article">
-<meta property="og:title" content="classpath中没用到的jar的影响">
-<meta property="og:url" content="http://jangzq.info/2015/07/02/classpath_jar/index.html">
+<meta property="og:title" content="自顶向下话socket之close">
+<meta property="og:url" content="http://jangzq.info/2015/08/24/socket_close/index.html">
 <meta property="og:site_name" content="Jangzq技术研究">
-<meta property="og:description" content="有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。1jzfile *  ZIP_Put_In_Cache0(const char *name, ZFILE zfd, char **pmsg, jlong lastModified, jboolean usemmap)
-在这个方法里">
-<meta property="og:updated_time" content="2015-07-02T13:28:07.000Z">
+<meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。在本篇将讨论socket的关闭。
+JDK实现socket.close方法，调用的本地方法Java_java_net_Pla">
+<meta property="og:updated_time" content="2015-08-24T13:59:39.000Z">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="classpath中没用到的jar的影响">
-<meta name="twitter:description" content="有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。1jzfile *  ZIP_Put_In_Cache0(const char *name, ZFILE zfd, char **pmsg, jlong lastModified, jboolean usemmap)
-在这个方法里">
+<meta name="twitter:title" content="自顶向下话socket之close">
+<meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。在本篇将讨论socket的关闭。
+JDK实现socket.close方法，调用的本地方法Java_java_net_Pla">
 
     
     <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
@@ -79,14 +82,14 @@
 		<header class="article-info clearfix">
   <h1 itemprop="name">
     
-      <a href="/2015/07/02/classpath_jar/" title="classpath中没用到的jar的影响" itemprop="url">classpath中没用到的jar的影响</a>
+      <a href="/2015/08/24/socket_close/" title="自顶向下话socket之close" itemprop="url">自顶向下话socket之close</a>
   </h1>
   <p class="article-author">By
        
 		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
 		
   <p class="article-time">
-    <time datetime="2015-07-02T13:19:16.000Z" itemprop="datePublished"> 发表于 2015-07-02</time>
+    <time datetime="2015-08-24T13:42:53.000Z" itemprop="datePublished"> 发表于 2015-08-24</time>
     
   </p>
 </header>
@@ -95,21 +98,23 @@
 		<div id="toc" class="toc-article">
 			<strong class="toc-title">文章目录</strong>
 		
-			
+			<ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#JDK实现"><span class="toc-number">1.</span> <span class="toc-text">JDK实现</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#linux内核实现"><span class="toc-number">2.</span> <span class="toc-text">linux内核实现</span></a></li></ol>
 		
 		</div>
 		
-		<p>有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。<br>通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">jzfile *  ZIP_Put_In_Cache0(<span class="keyword">const</span> <span class="keyword">char</span> *name, ZFILE zfd, <span class="keyword">char</span> **pmsg, jlong lastModified, jboolean usemmap)</span><br></pre></td></tr></table></figure></p>
-<p>在这个方法里，调用<code>static jlong readCEN(jzfile *zip, jint knownTotal)</code>方法“读取”了zip的central directory部分，里面关键的一句为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">mappedAddr = mmap64(<span class="number">0</span>, zip-&gt;mlen, PROT_READ, MAP_SHARED, zip-&gt;zfd, (<span class="keyword">off64_t</span>) offset)</span><br></pre></td></tr></table></figure></p>
-<p>即：将zip的 central directory部分进行了文件映射。上文中“读取”两字，我加了引号，就是因为并不是真正的读取了这块儿内容，而是采用文件映射的方式，将文件的这部分内容映射进了内存空间。这个方法里有一处值得我们注意，即是用了MAP_SHARED参数，即这一块儿空间是和其他进程共享的。<br>在JDK6之前，map了这个jar文件，这样占用了大量的地址空间（并没有占用内存），所以改为只映射 central directory，因为 central directory中包含检索包含文件的全部信息。<br>通过pmap，我们可以看到内存映射：</p>
-<blockquote>
-<p>00007f7bb818a000  63960K ——-   [ anon ]<br>00007f7bbc00a000      8K r—s- axis-ant-1.2.1.jar<br>00007f7bbc00c000      8K r—s- asm-attrs.jar<br>00007f7bbc00e000     20K r—s- antlr-2.7.6rc1.jar<br>00007f7bbc013000     28K r—s- ant-1.4.1.jar<br>00007f7bbc01a000     52K r—s- acegi-security-1.0.7.jar<br>00007f7bbc027000     44K r—s- charsets.jar<br>00007f7bbc032000   5968K rw—-   [ anon ]<br>00007f7bbc606000   1788K r—s- rt.jar<br>00007f7bbc7c5000   5264K rw—-   [ anon ]</p>
-</blockquote>
-<p>通过上述分析，我们可以得到如下结论：</p>
-<ul>
-<li>classpath包含的jar，会把 central directory映射到内存中去，在load class时会进行访问，所以会占用内存。如果jar文件较多，而且比较大，也会占用不少空间。</li>
-<li>对于一台主机上的不同java进程，引用相同的jar，最好使用同一个文件，这样会共享同一块内存，减少内存占用。</li>
-</ul>
+		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。<br>在本篇将讨论socket的关闭。</p>
+<h2 id="JDK实现">JDK实现</h2><p>socket.close方法，调用的本地方法<code>Java_java_net_PlainSocketImpl_socketClose0</code>，其中调用的是<code>NET_SocketClose</code>，详情见<a href="http://jangzq.info/2015/08/06/jdk_linux_close/">自顶向下话socket之blocking io wrapper</a>， 在其中调用的是close系统调用。</p>
+<h2 id="linux内核实现">linux内核实现</h2><p><strong>本文并不关注于关闭时的4次握手，而只关注开发网络程序相关内容。</strong><br>close是文件系统子系统的系统调用，所以遵循文件子系统close的规则，当打开的文件的引用大于1时，只是减少引用，并不关闭，这部分由于是vfs子系统内容，以后有机会再详细描述。最终调用的是<code>sock_release</code>，然后调用<code>inet_release</code>，在这个函数里，如果socket设置了SOCK_LINGER参数，则使用相关参数调用<code>tcp_close</code>。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">timeout = <span class="number">0</span>;</span><br><span class="line"><span class="keyword">if</span> (sock_flag(sk, SOCK_LINGER) &amp;&amp;</span><br><span class="line">    !(current-&gt;flags &amp; PF_EXITING))</span><br><span class="line">    timeout = sk-&gt;sk_lingertime;</span><br><span class="line">sock-&gt;sk = NULL;</span><br><span class="line">sk-&gt;sk_prot-&gt;close(sk, timeout);</span><br></pre></td></tr></table></figure></p>
+<p>下面介绍<code>tcp_close</code>：</p>
+<ol>
+<li><p>丢弃接收队列中的skb,如果存在丢弃的数据，向对端发送RST。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">     <span class="keyword">while</span> ((skb = __skb_dequeue(&amp;sk-&gt;sk_receive_queue)) != NULL) &#123;</span><br><span class="line">      u32 len = TCP_SKB_CB(skb)-&gt;end_seq - TCP_SKB_CB(skb)-&gt;seq;</span><br><span class="line">  </span><br><span class="line">      <span class="keyword">if</span> (TCP_SKB_CB(skb)-&gt;tcp_flags &amp; TCPHDR_FIN)</span><br><span class="line">          len--;</span><br><span class="line">      data_was_unread += len;</span><br><span class="line">      __kfree_skb(skb);</span><br><span class="line">  &#125;</span><br><span class="line">.....</span><br><span class="line"><span class="keyword">if</span> (data_was_unread) &#123;</span><br><span class="line">      <span class="comment">/* Unread data was tossed, zap the connection. */</span></span><br><span class="line">      NET_INC_STATS_USER(sock_net(sk), LINUX_MIB_TCPABORTONCLOSE);</span><br><span class="line">      tcp_set_state(sk, TCP_CLOSE);</span><br><span class="line">      tcp_send_active_reset(sk, sk-&gt;sk_allocation);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果设置了SO_LINGER，如下一直等待到timeout，或者发送完数据和FIN后，状态不为“ (TCPF_FIN_WAIT1 | TCPF_CLOSING | TCPF_LAST_ACK)”，</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">sk_stream_wait_close</span><span class="params">(<span class="keyword">struct</span> sock *sk, <span class="keyword">long</span> timeout)</span></span><br><span class="line"></span>&#123;</span><br><span class="line">    <span class="keyword">if</span> (timeout) &#123;</span><br><span class="line">        DEFINE_WAIT(wait);</span><br><span class="line">    </span><br><span class="line">        <span class="keyword">do</span> &#123;</span><br><span class="line">            <span class="keyword">prepare_t</span>o_wait(sk_sleep(sk), &amp;wait,</span><br><span class="line">                    TASK_INTERRUPTIBLE);</span><br><span class="line">            <span class="keyword">if</span> (sk_wait_event(sk, &amp;timeout, !sk_stream_closing(sk)))</span><br><span class="line">                <span class="keyword">break</span>;</span><br><span class="line">        &#125; <span class="keyword">while</span> (!signal_pending(current) &amp;&amp; timeout);</span><br><span class="line"></span><br><span class="line">        finish_wait(sk_sleep(sk), &amp;wait);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
   
 	</div>
 		<footer class="article-footer clearfix">
@@ -118,7 +123,7 @@
 
   <div class="article-tags">
   
-  <span></span> <a href="/tags/jvm/">jvm</a>
+  <span></span> <a href="/tags/linux内核/">linux内核</a>
   </div>
 
 </div>
@@ -127,7 +132,7 @@
 
 	<div class="article-share" id="share">
 	
-	  <div data-url="http://jangzq.info/2015/07/02/classpath_jar/" data-title="classpath中没用到的jar的影响 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  <div data-url="http://jangzq.info/2015/08/24/socket_close/" data-title="自顶向下话socket之close | Jangzq技术研究" data-tsina="null" class="share clearfix">
 	  </div>
 	
 	</div>
@@ -141,18 +146,18 @@
 <nav class="article-nav clearfix">
  
  <div class="prev" >
- <a href="/2015/07/03/CollectedHeapCollectorPolicy/" title="垃圾收集框架：CollectedHeap和CollectorPolicy">
+ <a href="/2015/08/24/bind_listen/" title="自顶向下话socket之bind、listen">
   <strong>上一篇：</strong><br/>
   <span>
-  垃圾收集框架：CollectedHeap和CollectorPolicy</span>
+  自顶向下话socket之bind、listen</span>
 </a>
 </div>
 
 
 <div class="next">
-<a href="/2015/06/28/tlab/"  title="HotSpot的TLAB实现解析">
+<a href="/2015/08/24/socket_buf/"  title="自顶向下话socket之缓存区内存分配限制">
  <strong>下一篇：</strong><br/> 
- <span>HotSpot的TLAB实现解析
+ <span>自顶向下话socket之缓存区内存分配限制
 </span>
 </a>
 </div>
@@ -167,7 +172,7 @@
   <div id="toc" class="toc-aside">
   <strong class="toc-title">文章目录</strong>
  
- 
+ <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#JDK实现"><span class="toc-number">1.</span> <span class="toc-text">JDK实现</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#linux内核实现"><span class="toc-number">2.</span> <span class="toc-text">linux内核实现</span></a></li></ol>
  
   </div>
 

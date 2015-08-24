@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   
-    <title>overcommit_memory深入解析 | Jangzq技术研究</title>
+    <title>自顶向下话socket之accept | Jangzq技术研究</title>
     <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
     
     <meta name="author" content="Zhang Zq">
@@ -12,39 +12,21 @@
 
     
     <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
-本文从内核角度分析了内核参数overcommit_memory的影响，并给出了如何应用此参数的建议意见。
-实例首先，从一个实例开始：操作系统： 
-
-linux 2.6.38
-
-JDK版本：
-
-java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
+在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。
+JDK实现调用的为Java_java_net_PlainSocketImpl_socketAccept，如果设置了超时，">
 <meta property="og:type" content="article">
-<meta property="og:title" content="overcommit_memory深入解析">
-<meta property="og:url" content="http://jangzq.info/2015/06/27/overcommit_memory/index.html">
+<meta property="og:title" content="自顶向下话socket之accept">
+<meta property="og:url" content="http://jangzq.info/2015/08/24/socket_accept/index.html">
 <meta property="og:site_name" content="Jangzq技术研究">
 <meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
-本文从内核角度分析了内核参数overcommit_memory的影响，并给出了如何应用此参数的建议意见。
-实例首先，从一个实例开始：操作系统： 
-
-linux 2.6.38
-
-JDK版本：
-
-java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
-<meta property="og:updated_time" content="2015-06-28T09:14:03.000Z">
+在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。
+JDK实现调用的为Java_java_net_PlainSocketImpl_socketAccept，如果设置了超时，">
+<meta property="og:updated_time" content="2015-08-24T14:02:55.000Z">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="overcommit_memory深入解析">
+<meta name="twitter:title" content="自顶向下话socket之accept">
 <meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
-本文从内核角度分析了内核参数overcommit_memory的影响，并给出了如何应用此参数的建议意见。
-实例首先，从一个实例开始：操作系统： 
-
-linux 2.6.38
-
-JDK版本：
-
-java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
+在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。
+JDK实现调用的为Java_java_net_PlainSocketImpl_socketAccept，如果设置了超时，">
 
     
     <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
@@ -100,14 +82,14 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 		<header class="article-info clearfix">
   <h1 itemprop="name">
     
-      <a href="/2015/06/27/overcommit_memory/" title="overcommit_memory深入解析" itemprop="url">overcommit_memory深入解析</a>
+      <a href="/2015/08/24/socket_accept/" title="自顶向下话socket之accept" itemprop="url">自顶向下话socket之accept</a>
   </h1>
   <p class="article-author">By
        
 		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
 		
   <p class="article-time">
-    <time datetime="2015-06-27T15:32:52.000Z" itemprop="datePublished"> 发表于 2015-06-27</time>
+    <time datetime="2015-08-24T13:42:56.000Z" itemprop="datePublished"> 发表于 2015-08-24</time>
     
   </p>
 </header>
@@ -116,41 +98,18 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 		<div id="toc" class="toc-article">
 			<strong class="toc-title">文章目录</strong>
 		
-			<ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#实例"><span class="toc-number">1.</span> <span class="toc-text">实例</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#解析"><span class="toc-number">2.</span> <span class="toc-text">解析</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#结论"><span class="toc-number">3.</span> <span class="toc-text">结论</span></a></li></ol>
+			<ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#JDK实现"><span class="toc-number">1.</span> <span class="toc-text">JDK实现</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#linux内核实现"><span class="toc-number">2.</span> <span class="toc-text">linux内核实现</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#内核软中断上下文"><span class="toc-number">2.1.</span> <span class="toc-text">内核软中断上下文</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#进程上下文"><span class="toc-number">2.2.</span> <span class="toc-text">进程上下文</span></a></li></ol></li></ol>
 		
 		</div>
 		
 		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>本文从内核角度分析了内核参数<code>overcommit_memory</code>的影响，并给出了如何应用此参数的建议意见。</p>
-<h2 id="实例">实例</h2><p>首先，从一个实例开始：<br><strong>操作系统： </strong></p>
-<blockquote>
-<p>linux 2.6.38</p>
-</blockquote>
-<p><strong>JDK版本：</strong></p>
-<blockquote>
-<p>java version “1.6.0_30”<br>Java(TM) SE Runtime Environment (build 1.6.0_30-b12)<br>Java HotSpot(TM) 64-Bit Server VM (build 20.5-b03, mixed mode)</p>
-</blockquote>
-<p>现象：启动java进程的时候，报如下的错误后退出</p>
-<blockquote>
-<p>Error occurred during initialization of VM<br>Could not reserve enough space for object heap<br>Could not create the Java virtual machine.</p>
-</blockquote>
-<p>疑惑：粗略的考虑一下，linux是使用虚拟内存的，而且linux分配给进程内存时候，只是分配一个地址空间，并不是马上分配内存，那么是什么限制导致了java虚拟机在初始化的时候即退出呢?</p>
-<h2 id="解析">解析</h2><p>首先，我们看一下java虚拟机是用什么系统调用来请求内存？<br>java虚拟机使用-Xms 和-Xmx指出java的堆的初始大小和最大大小，在java进程启动的时候，java虚拟机按照初始大小请求内存，但是虚拟机是用什么来请求内存呢？我们使用strace来看一下（我们使用 -Xms1G -Xmx1G的参数启动）：<br>得到如下输出<br><a id="more"></a><br>[pid 15854] mmap(NULL, 1159725056, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0) = -1 ENOMEM (Cannot allocate memory)<br>从以上打印我们可以看出，java虚拟机是通过mmap系统调用来请求内存的，在这里返回了-1，即ENOMEM</p>
-<p>然后，我们看一下mmap的源代码，发现了在mm/mmap.c中的__vm_enough_memory方法中，判断了是否有足够内存，下面我们深入分析一下。<br>在这个函数中我们发现了导致此问题的内核参数:overcommit_memory，此参数在/proc下的文件为：/proc/sys/vm/overcommit_memory 。这个参数的解释如下：</p>
-<blockquote>
-<p>This file contains the kernel virtual memory accounting mode. Values are:<br>              0: heuristic overcommit (this is the default)<br>              1: always overcommit, never check<br>              2: always check, never overcommit</p>
-</blockquote>
-<p>检查一下这台机子上的配置，</p>
-<blockquote>
-<p>cat /proc/sys/vm/overcommit_memory<br>2 </p>
-</blockquote>
-<p>果然被设置成了2。<br>改成0后，再执行，确实就不在报错退出了。<br>我们下一步通过源码进一步分析一下各个参数值的含义。<br>当参数为1时，这时不检查，直接返回0（内存足够）<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (sysctl_overcommit_memory == OVERCOMMIT_ALWAYS)</span><br><span class="line">          <span class="keyword">return</span> <span class="number">0</span>;</span><br></pre></td></tr></table></figure></p>
-<p>当参数时0时，这时候先拿要请求页数和这个计算值比较：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">(global_page_state(NR_FILE_PAGES)+ nr_swap_pages+global_page_state(NR_SLAB_RECLAIMABLE))*<span class="number">31</span>/<span class="number">32</span></span><br></pre></td></tr></table></figure></p>
-<p>即：文件缓存所占的页数+空闲的swap page数量+可以回收的SLAB的空间，然后再留下3%供root使用。<br>如果请求页数小于这个计算值，则返回0，否则把上面的计算值再加上一个值，再比较，这个值是：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">（global_page_state(NR_FREE_PAGES) -totalreserve_pages）*<span class="number">31</span>/<span class="number">32</span></span><br></pre></td></tr></table></figure></p>
-<p>空闲的内存（页数）-需要保留的内存（必须保留备用的内存），再留下3%供root使用的。<br>通过上面的公式可以看出，在这个参数的情况下，操作系统就是看一下还可用的页（包括swap中和内存中的）是否能满足这次请求的内存，而不管别的进程是否已经请求了很大的内存。这实际是存在风险的，因为虚拟内存已经申请，只是暂时没用，等大家一起使用内存的时候，内存有可能不够用，就会造成OOM-killed进程来终止进程了。<br>为什么需要分以上两步，这是因为历史原因，在以前的版本，nr_free_pages()开销比较大，所以先比较第一步，如果第一步不能满足才比较第二步，2.6.38的代码中，这个函数也是直接取计数器的值了，所以开销应该不大了。</p>
-<p>当参数时2时，这时操作系统是拿所有进程请求的(commit)的内存，和一个阈值比较，这个阈值为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">（(totalram_pages - <span class="keyword">hugetlb_t</span>otal_pages()) * sysctl_overcommit_ratio / <span class="number">100</span>）*<span class="number">31</span>/<span class="number">32</span>+total_swap_pages</span><br></pre></td></tr></table></figure></p>
-<p>含义是：(所有的内存-大页面所占的内存)然后，乘上<code>sysctl_overcommit_ratio</code>设定的百分比，保留给root用的之后，加上swap的大小。<br>即：所有进程的虚拟内存申请量不能大于 所有内存（除去大页面内存）*<code>sysctl_overcommit_ratio</code>，在加上swap的大小。<code>sysctl_overcommit_ratio</code>这个名称现在似乎名不符实，是不是？</p>
-<h2 id="结论">结论</h2><p>这两个内核参数应当谨慎设置，以免引起不必要的麻烦。<br>1）在生产环境里，<code>overcommit_memory</code>尽量不要设置为1，这是因为这会大大增加OOM-killed的几率，增加了整个系统的不稳定性。<br>2）如果运行的应用程序的内存可以预测，如数据库，我们可以使用2，因为数据库启动后，将关键的所需内存全部申请了虚拟内存，所以可以防止在数据库主机上运行某些不重要的程序时，造成oom，导致数据库被kill，限制其它程序申请虚拟内存，还可以减少内存导入导出的可能性。<br>3）如果实在不能确定所需内存（我们尽量避免这种情况），就用0吧，但一定要考虑到oom的风险。</p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。</p>
+<h2 id="JDK实现">JDK实现</h2><p>调用的为<code>Java_java_net_PlainSocketImpl_socketAccept</code>，如果设置了超时，则使用NET_Timeout来等待超时，或者可读，详细描述见<a href="http://jangzq.info/2015/08/06/jdk_linux_close/">自顶向下话socket之blocking io wrapper</a>，当超时或者出错，抛异常退出。<br>然后调用accept系统调用。</p>
+<h2 id="linux内核实现">linux内核实现</h2><p>和accept相关的内核操作分为两部分，一部分是内核软中断上下文中的协议处理部分，即完成3次握手等协议处理，最后将连接放入request_sock_queue的rskq_accept_head链表，在进程上下文中，即调用accept系统调用时，处理此链表中的连接。下面分别描述。</p>
+<h3 id="内核软中断上下文">内核软中断上下文</h3><p>在这里不展开讨论tcp协议，只是描述一下我们感兴趣的部分。在<code>tcp_rcv_state_process</code>方法里，可以看出当socket的状态为TCP_LISTEN时，如果收到syn，调用相应协议的<code>conn_request</code>方法，在这里，调用的是<code>tcp_conn_request</code>。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">case</span> TCP_LISTEN:</span><br><span class="line">    <span class="keyword">if</span> (th-&gt;ack)</span><br><span class="line">        <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (th-&gt;rst)</span><br><span class="line">        <span class="keyword">goto</span> discard;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (th-&gt;syn) &#123;</span><br><span class="line">        <span class="keyword">if</span> (th-&gt;fin)</span><br><span class="line">            <span class="keyword">goto</span> discard;</span><br><span class="line">        <span class="keyword">if</span> (icsk-&gt;icsk_af_ops-&gt;conn_request(sk, skb) &lt; <span class="number">0</span>)</span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span>;</span><br></pre></td></tr></table></figure></p>
+<p>在<code>tcp_conn_request</code>，当accept backlog满了，丢弃此包。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (sk_acceptq_is_full(sk) &amp;&amp; inet_csk_reqsk_queue_young(sk) &gt; <span class="number">1</span>) &#123;</span><br><span class="line">    NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);</span><br><span class="line">    <span class="keyword">goto</span> drop;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>其中的判断逻辑为<code>sk-&gt;sk_ack_backlog &gt; sk-&gt;sk_max_ack_backlog</code>。</p>
+<h3 id="进程上下文">进程上下文</h3><p>调用inet_accept，在这个函数里，最终调用的是<code>inet_csk_accept</code>方法，这个方法里就是从request_sock_queue的rskq_accept_head链表中取出连接，如果队列为空，则根据是否阻塞模式，进行等待，或者退出，从下面代码可以看出，当为非阻塞模式时，将errno设为EAGAIN，然后退出，否则以timeout进行等待。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (reqsk_queue_empty(<span class="built_in">queue</span>)) &#123;</span><br><span class="line">    <span class="keyword">long</span> timeo = sock_rcvtimeo(sk, flags &amp; O_NONBLOCK);</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* If this is a non blocking socket don't sleep */</span></span><br><span class="line">    error = -EAGAIN;</span><br><span class="line">    <span class="keyword">if</span> (!timeo)</span><br><span class="line">        <span class="keyword">goto</span> out_err;</span><br><span class="line"></span><br><span class="line">    error = inet_csk_wait_for_connect(sk, timeo);</span><br><span class="line">    <span class="keyword">if</span> (error)</span><br><span class="line">        <span class="keyword">goto</span> out_err;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
   
 	</div>
 		<footer class="article-footer clearfix">
@@ -159,7 +118,7 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 
   <div class="article-tags">
   
-  <span></span> <a href="/tags/linux内核/">linux内核</a>
+  <span></span> <a href="/tags/jdk/">jdk</a><a href="/tags/linux内核/">linux内核</a>
   </div>
 
 </div>
@@ -168,7 +127,7 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 
 	<div class="article-share" id="share">
 	
-	  <div data-url="http://jangzq.info/2015/06/27/overcommit_memory/" data-title="overcommit_memory深入解析 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  <div data-url="http://jangzq.info/2015/08/24/socket_accept/" data-title="自顶向下话socket之accept | Jangzq技术研究" data-tsina="null" class="share clearfix">
 	  </div>
 	
 	</div>
@@ -182,13 +141,21 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
 <nav class="article-nav clearfix">
  
  <div class="prev" >
- <a href="/2015/06/28/tlab/" title="HotSpot的TLAB实现解析">
+ <a href="/2015/08/24/nio-kernel/" title="java nio之内核篇">
   <strong>上一篇：</strong><br/>
   <span>
-  HotSpot的TLAB实现解析</span>
+  java nio之内核篇</span>
 </a>
 </div>
 
+
+<div class="next">
+<a href="/2015/08/24/bind_listen/"  title="自顶向下话socket之bind、listen">
+ <strong>下一篇：</strong><br/> 
+ <span>自顶向下话socket之bind、listen
+</span>
+</a>
+</div>
 
 </nav>
 
@@ -200,7 +167,7 @@ java version “1.6.0_30”Java(TM) SE Runtime Environment (build 1.6.0_30-b">
   <div id="toc" class="toc-aside">
   <strong class="toc-title">文章目录</strong>
  
- <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#实例"><span class="toc-number">1.</span> <span class="toc-text">实例</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#解析"><span class="toc-number">2.</span> <span class="toc-text">解析</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#结论"><span class="toc-number">3.</span> <span class="toc-text">结论</span></a></li></ol>
+ <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#JDK实现"><span class="toc-number">1.</span> <span class="toc-text">JDK实现</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#linux内核实现"><span class="toc-number">2.</span> <span class="toc-text">linux内核实现</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#内核软中断上下文"><span class="toc-number">2.1.</span> <span class="toc-text">内核软中断上下文</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#进程上下文"><span class="toc-number">2.2.</span> <span class="toc-text">进程上下文</span></a></li></ol></li></ol>
  
   </div>
 

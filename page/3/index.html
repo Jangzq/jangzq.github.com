@@ -1,0 +1,674 @@
+
+ <!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  
+    <title>Jangzq技术研究</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="Zhang Zq">
+    
+
+    
+    <meta name="description" content="Jangzq&apos;s blog | java | linux | postgresql | mysql | hadoop">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Jangzq技术研究">
+<meta property="og:url" content="http://jangzq.info/page/3/index.html">
+<meta property="og:site_name" content="Jangzq技术研究">
+<meta property="og:description" content="Jangzq&apos;s blog | java | linux | postgresql | mysql | hadoop">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Jangzq技术研究">
+<meta name="twitter:description" content="Jangzq&apos;s blog | java | linux | postgresql | mysql | hadoop">
+
+    
+    <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+</head>
+
+  <body>
+    <header>
+      
+<div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="Jangzq技术研究">Jangzq技术研究</a></h1>
+				<h2 class="blog-motto">关注代码的秘密， 记录探索点滴， 分享技术收获</h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="菜单">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">主页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于我</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="搜索" />
+						<input type="hidden" name="q" value="site:jangzq.info">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main">
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/07/26/GenCollectedHeap_allocate/" title="分代内存管理之慢速路径内存分配" itemprop="url">分代内存管理之慢速路径内存分配</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-26T03:45:47.000Z" itemprop="datePublished"> 发表于 2015-07-26</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>分代的内存管理使用GenCollectedHeap。generation的类如下：</p>
+<p><img src="/images/generation.png" alt="Generation"></p>
+<p>在这里我们主要剖析慢速路径使用的GenCollectedHeap::mem_allocate方法。其内存分配委托给了相应的CollectorPolicy实现。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">return</span> collector_policy()-&gt;mem_allocate_work(size,</span><br><span class="line">                                             <span class="keyword">false</span> <span class="comment">/* is_tlab */</span>,</span><br><span class="line">                                             gc_overhead_limit_was_exceeded);</span><br></pre></td></tr></table></figure>
+<p>所以，下面剖析GenCollectorPolicy::mem_allocate_work的实现。</p>
+<ul>
+<li><p>内存分配的逻辑在下列循环中，说明此方法只有两个出口，或者分配成功，或者抛出异常。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (<span class="keyword">int</span> try_count = <span class="number">1</span>; <span class="comment">/* return or throw */</span>; try_count += <span class="number">1</span>) </span><br><span class="line">&#123;</span><br><span class="line">	....</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>分代的内存管理，在Young generation里实现无锁的分配方式，从assert中可以看出，Young generation必须满足<code>supports_inline_contig_alloc</code>，即必须满足，在堆中必须有一块儿连续的空间，可用范围由top_addr()，end_addr()决定的，并且可以靠移动top_addr来分配内存。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">assert(gen0-&gt;supports_inline_contig_alloc(),</span><br><span class="line">      <span class="string">"Otherwise, must do alloc within heap lock"</span>);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>接下来，在Young generation进行无锁分配。</p>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/07/26/GenCollectedHeap_allocate/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/07/05/new/" title="通过解释器的new操作看内存分配" itemprop="url">通过解释器的new操作看内存分配</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-04T16:13:29.000Z" itemprop="datePublished"> 发表于 2015-07-05</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
+<p>了解hotspot的内存分配流程，TemplateTable::_new方法是个比较好的入口，这个方法生成了供以后解释执行时使用的汇编代码。从这个方法入手，可以了解hotspot创建对象所需要的操作，对我们开发应用程序时，进行内存管理设计有很大的帮助。</p>
+<h2 id="概述">概述</h2><p>新建一个对象，有三种方式。</p>
+<ol>
+<li><p>在TLAB中分配<br>如果<code>UseTLAB</code>为真（缺省是true），就先进行TLAB分配，本部分的内容在<a href="http://jangzq.info/2015/06/28/tlab/">《HotSpot的TLAB实现解析》</a>一文里也进行了简单的说明，本文后面详细说明。</p>
+</li>
+<li><p>在shared eden中快速分配。<br>TLAB是eden中的每个线程自己使用的部分，shared eden就是共享的部分。当在TLAB中分配失败后，也就是TLAB中的内存大小不够时，就有可能在shared eden中分配。之所以是有可能，是需要满足以下的条件。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> <span class="keyword">bool</span> allow_shared_alloc =</span><br><span class="line">   Universe::heap()-&gt;supports_inline_contig_alloc() &amp;&amp; !CMSIncrementalMode</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p><code>supports_inline_contig_alloc</code>与具体的<code>CollectedHeap</code>有关，也就是必须满足，在堆中必须有一块儿连续的空间，可用范围由<code>top_addr()</code>，<code>end_addr()</code>决定的，并且可以靠移动<code>top_addr</code>来分配内存。<br><code>CMSIncrementalMode</code>是增量CMS模式，当设置了增量CMS模式时，不允许在share eden中快速分配。</p>
+<ol>
+<li>慢速路径<br>调用<code>InterpreterRuntime::_new</code>进行分配。当类没有解析或者初始化时，还有上面的两种分配方式都不成功的时候，进入慢速模式。</li>
+</ol>
+<h2 id="源码解析">源码解析</h2>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/07/05/new/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/07/03/CollectedHeapCollectorPolicy/" title="垃圾收集框架：CollectedHeap和CollectorPolicy" itemprop="url">垃圾收集框架：CollectedHeap和CollectorPolicy</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-03T14:10:27.000Z" itemprop="datePublished"> 发表于 2015-07-03</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p><em>注：未特殊说明，都指的是JDK7.0</em></p>
+<p>hotspot的垃圾收集框架有两个主要的组成部分，其一是CollectedHeap、其一是CollectorPolicy。根据不同的启动参数，hotspot选择相应的Heap和Policy。<br>首先我们看一下类图，看一下有多少种CollectedHeap和CollectorPolicy。</p>
+<p><img src="/images/heap_policy.png" alt="类图"></p>
+<p>下面列出的是CollectorPolicy和CollectedHeap的关键属性和方法，我们以此来看一下Policy和Heap各自的特性。</p>
+<h2 id="CollectedHeap">CollectedHeap</h2><p>CollectedHeap是java堆在hotspot中的体现，根据垃圾收集算法的不同，具有不同类型的子类，CollectedHeap的主要功能是分配内存，在这个父类里实现的主要是分配的流程，包括TLAB、其它分配等。但是不负责真正的内存分配，因为内存是由其子类管理，所以只定义这些分配的抽象方法。</p>
+<p><strong>属性</strong><br>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/07/03/CollectedHeapCollectorPolicy/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/07/02/classpath_jar/" title="classpath中没用到的jar的影响" itemprop="url">classpath中没用到的jar的影响</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-07-02T13:19:16.000Z" itemprop="datePublished"> 发表于 2015-07-02</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p>有时，我们的classpath中包含很多并没有用到的jar，这些jar有什么影响，影响大不大，下面分析一下。<br>通过阅读源码，发现在打开jar文件的时候，调用了下面这个方法。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">jzfile *  ZIP_Put_In_Cache0(<span class="keyword">const</span> <span class="keyword">char</span> *name, ZFILE zfd, <span class="keyword">char</span> **pmsg, jlong lastModified, jboolean usemmap)</span><br></pre></td></tr></table></figure></p>
+<p>在这个方法里，调用<code>static jlong readCEN(jzfile *zip, jint knownTotal)</code>方法“读取”了zip的central directory部分，里面关键的一句为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">mappedAddr = mmap64(<span class="number">0</span>, zip-&gt;mlen, PROT_READ, MAP_SHARED, zip-&gt;zfd, (<span class="keyword">off64_t</span>) offset)</span><br></pre></td></tr></table></figure></p>
+<p>即：将zip的 central directory部分进行了文件映射。上文中“读取”两字，我加了引号，就是因为并不是真正的读取了这块儿内容，而是采用文件映射的方式，将文件的这部分内容映射进了内存空间。这个方法里有一处值得我们注意，即是用了MAP_SHARED参数，即这一块儿空间是和其他进程共享的。<br>在JDK6之前，map了这个jar文件，这样占用了大量的地址空间（并没有占用内存），所以改为只映射 central directory，因为 central directory中包含检索包含文件的全部信息。<br>通过pmap，我们可以看到内存映射：</p>
+<blockquote>
+<p>00007f7bb818a000  63960K ——-   [ anon ]<br>00007f7bbc00a000      8K r—s- axis-ant-1.2.1.jar<br>00007f7bbc00c000      8K r—s- asm-attrs.jar<br>00007f7bbc00e000     20K r—s- antlr-2.7.6rc1.jar<br>00007f7bbc013000     28K r—s- ant-1.4.1.jar<br>00007f7bbc01a000     52K r—s- acegi-security-1.0.7.jar<br>00007f7bbc027000     44K r—s- charsets.jar<br>00007f7bbc032000   5968K rw—-   [ anon ]<br>00007f7bbc606000   1788K r—s- rt.jar<br>00007f7bbc7c5000   5264K rw—-   [ anon ]</p>
+</blockquote>
+<p>通过上述分析，我们可以得到如下结论：</p>
+<ul>
+<li>classpath包含的jar，会把 central directory映射到内存中去，在load class时会进行访问，所以会占用内存。如果jar文件较多，而且比较大，也会占用不少空间。</li>
+<li>对于一台主机上的不同java进程，引用相同的jar，最好使用同一个文件，这样会共享同一块内存，减少内存占用。</li>
+</ul>
+
+        
+        
+        <p class="article-more-link">
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/06/28/tlab/" title="HotSpot的TLAB实现解析" itemprop="url">HotSpot的TLAB实现解析</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-06-28T09:12:50.000Z" itemprop="datePublished"> 发表于 2015-06-28</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>本文解析了TLAB的实现机制，最后讨论了如何利用TLAB机制，进行高效程序设计，如果你对原理不感兴趣，也请看下<strong>启示</strong>部分。</p>
+<p>内存分配是虚拟机最常见的操作之一，所以处理效率高低对整体性能有很大的影响。同时，虚拟机是一个多线程的运行环境，内存分配也不可避免的受到并发的制约，而锁又是造成性能下降的主因之一，即使使用CAS，对于如此频繁的操作也是巨大的性能负担。<br>一个自然而然的想法是将内存分为几个部分，每个线程只使用自己的内存区域，这样内存分配就不用进行同步，当然能达到较高的效率，TLAB就是这种想法的产物。每一个线程都有自己的一片内存区域，这片区域就叫<strong>TLAB(Thread Local alloc Buffer)</strong>，虚拟机的任务就是合理的分配TLAB的大小，使内存分配都尽量在TLAB中完成，以达到更高的效率。</p>
+<h2 id="TLAB机制解析">TLAB机制解析</h2><p>hotspot用Thread类（Thread.cpp，不是java类）来描述一个线程，在Thread类里有一个<code>ThreadLocalAllocBuffer _tlab</code>变量，表征这个线程的tlab。在ThreadLocalAllocBuffer 类里，有三个属性描述了tlab的范围及使用情况，<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">HeapWord* _start;      <span class="comment">//当前tlab的起始地址</span></span><br><span class="line">HeapWord* <span class="keyword">_t</span>op;        <span class="comment">//最后一次在tlab上分配内存后的指针位置。</span></span><br><span class="line">HeapWord* _end;       <span class="comment">//tlab的结束地址。</span></span><br></pre></td></tr></table></figure></p>
+<p>采用这样的方法，首先要考虑，给每个线程的TLAB分配多大空间。分配大了，别的线程又无法使用，造成了浪费；分配小了，剩余的空间不够分配的时候，还需要采用别的方式分配。每个线程需要分配的内存是不同的，有的线程需要分配的内存多，有的现场分配的内存少，给所有线程分配同样大小的TLAB空间显然是不适合的。另外，一个线程不同的时间可能有不同的内存要求，这段时间使用内存多，过一会儿又少了，所以给一个线程固定的TLAB空间显然也是不适合的。也就是，需要解决下面两个问题：1）一个线程的TLAB初始时分配多大。2）什么时候进行动态调整，调整成多大。本文将围绕这两个问题，深入hotspot源码，探究答案。</p>
+<h3 id="初始分配">初始分配</h3>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/06/28/tlab/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/06/27/overcommit_memory/" title="overcommit_memory深入解析" itemprop="url">overcommit_memory深入解析</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-06-27T15:32:52.000Z" itemprop="datePublished"> 发表于 2015-06-27</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>本文从内核角度分析了内核参数<code>overcommit_memory</code>的影响，并给出了如何应用此参数的建议意见。</p>
+<h2 id="实例">实例</h2><p>首先，从一个实例开始：<br><strong>操作系统： </strong></p>
+<blockquote>
+<p>linux 2.6.38</p>
+</blockquote>
+<p><strong>JDK版本：</strong></p>
+<blockquote>
+<p>java version “1.6.0_30”<br>Java(TM) SE Runtime Environment (build 1.6.0_30-b12)<br>Java HotSpot(TM) 64-Bit Server VM (build 20.5-b03, mixed mode)</p>
+</blockquote>
+<p>现象：启动java进程的时候，报如下的错误后退出</p>
+<blockquote>
+<p>Error occurred during initialization of VM<br>Could not reserve enough space for object heap<br>Could not create the Java virtual machine.</p>
+</blockquote>
+<p>疑惑：粗略的考虑一下，linux是使用虚拟内存的，而且linux分配给进程内存时候，只是分配一个地址空间，并不是马上分配内存，那么是什么限制导致了java虚拟机在初始化的时候即退出呢?</p>
+<h2 id="解析">解析</h2><p>首先，我们看一下java虚拟机是用什么系统调用来请求内存？<br>java虚拟机使用-Xms 和-Xmx指出java的堆的初始大小和最大大小，在java进程启动的时候，java虚拟机按照初始大小请求内存，但是虚拟机是用什么来请求内存呢？我们使用strace来看一下（我们使用 -Xms1G -Xmx1G的参数启动）：<br>得到如下输出<br>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/06/27/overcommit_memory/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/linux内核/">linux内核</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+
+  <nav id="page-nav" class="clearfix">
+    <a class="extend prev" rel="prev" href="/page/2/"><span></span>Prev</a><a class="page-number" href="/">1</a><a class="page-number" href="/page/2/">2</a><span class="page-number current">3</span>
+  </nav>
+
+</div>
+      <div class="openaside"><a class="navbutton" href="#" title="显示侧边栏"></a></div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="隐藏侧边栏"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+<div class="tagslist">
+	<p class="asidetitle">标签</p>
+		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>14</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>11</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/jdk/" title="jdk">jdk<sup>8</sup></a></li>
+			
+		
+		</ul>
+</div>
+
+
+  <div class="linkslist">
+  <p class="asidetitle">友情链接</p>
+    <ul>
+        
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS 订阅</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	
+	<section class="info">
+		<p> Jangzq&#39;s blog <br/>
+			Focus on the secret of code!</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		<a href="http://weibo.com/Jangzq" target="_blank" class="icon-weibo" title="微博"></a>
+		
+		
+		<a href="https://github.com/Jangzq" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:zqzhangmail@163.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+			
+		
+
+		<p class="copyright">
+		Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Jacman">Jacman</a> © 2015 
+		
+		<a href="/about" target="_blank" title="Zhang Zq">Zhang Zq</a>
+		
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script src="/js/jquery.imagesloaded.min.js"></script>
+<script src="/js/gallery.js"></script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+  
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else{
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+        
+    }
+  });
+});
+</script>
+
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+<!-- Analytics Begin -->
+
+
+
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3F435d1985a249fde8415798105b4f848b' type='text/javascript'%3E%3C/script%3E"));
+</script>
+
+
+
+<!-- Analytics End -->
+
+<!-- Totop Begin -->
+
+	<div id="totop">
+	<a title="返回顶部"><img src="/img/scrollup.png"/></a>
+	</div>
+	<script src="/js/totop.js"></script>
+
+<!-- Totop End -->
+
+<!-- MathJax Begin -->
+<!-- mathjax config similar to math.stackexchange -->
+
+
+<!-- MathJax End -->
+
+<!-- Tiny_search Begin -->
+
+<!-- Tiny_search End -->
+
+  </body>
+ </html>

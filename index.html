@@ -77,6 +77,70 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
+      <a href="/2015/08/30/jstack_demo/" title="ujvmstap demo" itemprop="url">ujvmstap demo</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-08-30T12:27:29.000Z" itemprop="datePublished"> 发表于 2015-08-30</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在<a href="https://github.com/Jangzq/ujvmstap" target="_blank" rel="external">ujvmstap</a>中，包含两个实例，一个用来得到调用火焰图，另一个用来得到off cpu的火焰图。<br><strong>下面的图，在新窗口打开后，可以看的更详细(我只试过firefox)</strong></p>
+<h2 id="调用火焰图">调用火焰图</h2><p>stap脚本为<code>jstackflame.stap</code>，可以直接调用<code>jstackflame.sh</code>，下面为三种调用方法示例。</p>
+<h3 id="打印kenerl，native，java调用栈">打印kenerl，native，java调用栈</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">print</span>_kernel = <span class="number">1</span>;</span><br><span class="line"><span class="built_in">print</span>_ustack = <span class="number">1</span>;</span><br><span class="line"><span class="built_in">print</span>_vmself = <span class="number">0</span>;</span><br></pre></td></tr></table></figure>
+<p><img src="/images/with-kernel.svg" alt="with-kernel"></p>
+<h3 id="只打印java调用栈">只打印java调用栈</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">print</span>_kernel = <span class="number">0</span>;</span><br><span class="line"><span class="built_in">print</span>_ustack = <span class="number">0</span>;</span><br><span class="line"><span class="built_in">print</span>_vmself = <span class="number">0</span>;</span><br></pre></td></tr></table></figure>
+<p><img src="/images/only-java.svg" alt="only-java"></p>
+<h3 id="打印jvm调用栈">打印jvm调用栈</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">print</span>_kernel = <span class="number">0</span>;</span><br><span class="line"><span class="built_in">print</span>_ustack = <span class="number">0</span>;</span><br><span class="line"><span class="built_in">print</span>_vmself = <span class="number">1</span>;</span><br></pre></td></tr></table></figure>
+<p>在这个图中，我们可以看到gc占的cpu。<br><img src="/images/gc.svg" alt="gc"></p>
+<h2 id="off_cpu火焰图">off cpu火焰图</h2><p>可以通过这种图，观测程序因为wait、被抢占等原因被中断执行的情况，在调优context switch时很有用。<br>stap脚本为<code>offcpuflame.stap</code>，可以直接调用<code>offcpuflame.sh</code><br><img src="/images/off_cpu.svg" alt="off_cpu"></p>
+
+        
+        
+        <p class="article-more-link">
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/ujvmstap/">ujvmstap</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
       <a href="/2015/08/30/jstack/" title="SYSTEMTAP中得到java调用栈" itemprop="url">SYSTEMTAP中得到java调用栈</a>
   </h1>
   <p class="article-author">By
@@ -148,7 +212,7 @@
 
   <div class="article-tags">
   
-  <span></span> <a href="/tags/jvm/">jvm</a><a href="/tags/systemtap/">systemtap</a>
+  <span></span> <a href="/tags/jvm/">jvm</a><a href="/tags/systemtap/">systemtap</a><a href="/tags/ujvmstap/">ujvmstap</a>
   </div>
 
 </div>
@@ -906,103 +970,6 @@
 
 
 
-   
-    
-    <article class="post-expand post" itemprop="articleBody"> 
-        <header class="article-info clearfix">
-  <h1 itemprop="name">
-    
-      <a href="/2015/08/24/inputstream_read/" title="自顶向下话socket之inputStream" itemprop="url">自顶向下话socket之inputStream</a>
-  </h1>
-  <p class="article-author">By
-       
-		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
-		
-  <p class="article-time">
-    <time datetime="2015-08-24T13:42:50.000Z" itemprop="datePublished"> 发表于 2015-08-24</time>
-    
-  </p>
-</header>
-    <div class="article-content">
-        
-        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。<br>在本篇里讨论socket的inputStream的读操作。</p>
-<h2 id="JDK实现">JDK实现</h2><p>socket.getInputStream().read调用的是本地方法<code>Java_java_net_SocketInputStream_socketRead0</code>.<br>如果设置了超时，则使用NET_Timeout来等待超时，或者可读，详细描述见<a href="http://jangzq.info/2015/08/06/jdk_linux_close/">自顶向下话socket之blocking io wrapper</a>，当超时或者出错，抛异常退出。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (timeout) &#123;</span><br><span class="line">    nread = NET_Timeout(fd, timeout);</span><br><span class="line">    ....</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
-<p>如果没超时或者出错，说明可读，这时调用<code>NET_Read</code>进行读数据操作，这里面调用的是recv系统调用。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">NET_ReadV</span><span class="params">(<span class="keyword">int</span> s, <span class="keyword">const</span> <span class="keyword">struct</span> iovec * <span class="built_in">vector</span>, <span class="keyword">int</span> count)</span> </span>&#123;</span><br><span class="line">    BLOCKING_IO_RETURN_INT( s, readv(s, <span class="built_in">vector</span>, count) );</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
-<h2 id="内核实现">内核实现</h2><p>recv系统调用最终调用的是<code>tcp_recvmsg</code>函数，而涉及接收的操作，在两类上下文里执行。其一为软中断上下文，其一为进程上下文。当用户程序调用recv读取数据时，此时运行在进程上下文，而收到tcp包时，系统将包或拷贝到用户空间，或放入相关队列，供用户进程使用，这些操作执行在软中断上下文里，下面分别描述。</p>
-<h3 id="软中断上下文">软中断上下文</h3><p>在收到包后，网络软中断里调用<code>tcp_v4_rcv</code>，根据不同的情况处理接收到的包。</p>
-<ul>
-<li><p>如果socket上没有上锁，说明接收进程正在休眠等待，或者没有开始读取。在“休眠等待”的情况下，我们尝试把包放入prequeue队列，见<code>tcp_prequeue</code>。</p>
-<ol>
-<li><p>如果设置了<code>/proc/sys/net/ipv4/tcp_low_latency</code>，或者没有开始读取，返回。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (<span class="keyword">sysctl_t</span>cp_low_latency || !tp-&gt;ucopy.task)</span><br><span class="line"> <span class="keyword">return</span> <span class="keyword">false</span>;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>当prequeue队列里的内存大于接收缓存（<code>sk-&gt;sk_rcvbuf</code>），这时也调用<code>sk_backlog_rcv</code>处理prequeue队列里的skb。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (tp-&gt;ucopy.memory &gt; sk-&gt;sk_rcvbuf) &#123;</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">while</span> ((skb1 = __skb_dequeue(&amp;tp-&gt;ucopy.prequeue)) != NULL) &#123;</span><br><span class="line">        sk_backlog_rcv(sk, skb1);</span><br><span class="line">        .......</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    tp-&gt;ucopy.memory = <span class="number">0</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>当第一个skb放入prequeue队列时，唤醒等待的线程。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">else</span> <span class="keyword">if</span> (skb_queue_len(&amp;tp-&gt;ucopy.prequeue) == <span class="number">1</span>) &#123;</span><br><span class="line">    wake_up_interruptible_sync_poll(sk_sleep(sk),</span><br><span class="line">                   POLLIN | POLLRDNORM | POLLRDBAND);</span><br><span class="line">    <span class="keyword">if</span> (!inet_csk_ack_scheduled(sk))</span><br><span class="line">        <span class="keyword">inet_csk_reset_xmit_t</span>imer(sk, ICSK_TIME_DACK,</span><br><span class="line">                      (<span class="number">3</span> * tcp_rto_min(sk)) / <span class="number">4</span>,</span><br><span class="line">                      TCP_RTO_MAX);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-</li>
-</ol>
-</li>
-<li><p>当socket上有锁，说明接收者正在处理，这时，将skb放入backlog队列，当<code>sk-&gt;sk_backlog.len + atomic_read(&amp;sk-&gt;sk_rmem_alloc) &gt; sk-&gt;sk_rcvbuf + sk-&gt;sk_sndbuf</code>时，丢弃这个包，释放内存返回。</p>
-</li>
-<li>在没有开始读取（主要是非阻塞的情况下），或者设置了<code>/proc/sys/net/ipv4/tcp_low_latency</code>的情况下，直接调用<code>tcp_v4_do_rcv</code>，在这里只关注在连接建立后，处理包的流程，这里的逻辑非常复杂，简而言之，就是将乱序的包放入out_of_order队列，如果是顺序的包，如果已经开始了数据直接拷贝，并且拷贝线程是本线程，直接内存拷贝，否则放入receive队列<code>sk-&gt;sk_receive_queue</code>，并检查out_of_order队列里是否有下一个包，放入receive队列。上述逻辑见<code>tcp_rcv_established</code>。</li>
-</ul>
-<h3 id="进程上下文">进程上下文</h3><p>在这里分析<code>tcp_recvmsg</code>函数，在这里只分析对我们编程有指导意义的部分。</p>
-<ul>
-<li>block模式的超时时间是由<code>SO_RCVTIMEO</code>决定的。</li>
-<li><p>目标读取数据量的确定。缺省情况下，只要读到了数据即返回，但这时有可能因为小包导致执行过多内核操作，所以在对数据协议清楚的情况下，调用recv时，flag可以设置MSG_WAITALL，一定读取到参数len才返回。另外socket option SO_RCVLOWAT参数也会起作用，如下：</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">inline</span> <span class="keyword">int</span> <span class="title">sock_rcvlowat</span><span class="params">(<span class="keyword">const</span> <span class="keyword">struct</span> sock *sk, <span class="keyword">int</span> waitall, <span class="keyword">int</span> len)</span></span><br><span class="line"></span>&#123;</span><br><span class="line">    <span class="keyword">return</span> (waitall ? len : <span class="keyword">min_t</span>(<span class="keyword">int</span>, sk-&gt;sk_rcvlowat, len)) ? : <span class="number">1</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>将各种队列里的数据拷贝到用户空间。</p>
-<ol>
-<li>先处理receive队列，如果没有读到数据，直接返回-EAGAIN。</li>
-<li>处理prequeue队列，对于每个包，调用tcp_v4_do_rcv，见上文描述，见<code>tcp_prequeue_process</code>。</li>
-<li><p>如果是被唤醒的，则先处理prequeue队列， 即从下面的代码之下的部分。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (copied &gt;= target) &#123;</span><br><span class="line">    <span class="comment">/* Do not sleep, just process backlog. */</span></span><br><span class="line">    release_sock(sk);</span><br><span class="line">    lock_sock(sk);</span><br><span class="line">&#125; <span class="keyword">else</span></span><br><span class="line">    sk_wait_data(sk, &amp;timeo);</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>由于在处理过程中，新来的包在backlog队列里，所以在<code>__release_sock</code>中遍历backlog队列，调用的还是tcp_v4_do_rcv。</p>
-</li>
-</ol>
-</li>
-</ul>
-<h2 id="总结">总结</h2><p>在整个过程中，涉及如下几个队列：receive队列、prequeue队列、backlog队列、out_of_order队列。其中，receive队列是存放顺序的包，已经具备拷贝到用户空间的条件，处理一个顺序包时（这个包可能是新读取的，也可能是处理别的队列缓存的包），如果目前没有读取（或者读取的不是本进程），则放入此队列，如果正在读取，则直接拷贝到用户空间。prequeue队列，当收到一个包时，有进程正在读此socket，并且处于阻塞等待，放入此队列，当进程被唤醒，继续执行时，首先处理这个队列。当收到一个包时，有的线程正在读取，则放到backlog队列时，当进程处理完，准备退出时处理这个队列的包。</p>
-
-        
-        
-        <p class="article-more-link">
-          
-       </p>
-    </div>
-    <footer class="article-footer clearfix">
-<div class="article-catetags">
-
-
-  <div class="article-tags">
-  
-  <span></span> <a href="/tags/jdk/">jdk</a><a href="/tags/linux内核/">linux内核</a>
-  </div>
-
-</div>
-
-
-
-
-<div class="comments-count">
-	
-</div>
-
-</footer>
-
-
-    </article>
-
-
-
-
-
-
 
   <nav id="page-nav" class="clearfix">
     <span class="page-number current">1</span><a class="page-number" href="/page/2/">2</a><a class="page-number" href="/page/3/">3</a><a class="extend next" rel="next" href="/page/2/">Next<span></span></a>
@@ -1032,6 +999,10 @@
 		
 			
 				<li><a href="/tags/jdk/" title="jdk">jdk<sup>8</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/ujvmstap/" title="ujvmstap">ujvmstap<sup>2</sup></a></li>
 			
 		
 			

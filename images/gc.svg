@@ -1,0 +1,1373 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="562" onload="init(evt)" viewBox="0 0 1200 562" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<defs >
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	.func_g:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	var details, svg;
+	function init(evt) { 
+		details = document.getElementById("details").firstChild; 
+		svg = document.getElementsByTagName("svg")[0];
+	}
+	function s(info) { details.nodeValue = "Function: " + info; }
+	function c() { details.nodeValue = ' '; }
+	function find_child(parent, name, attr) {
+		var children = parent.childNodes;
+		for (var i=0; i<children.length;i++) {
+			if (children[i].tagName == name)
+				return (attr != undefined) ? children[i].attributes[attr].value : children[i];
+		}
+		return;
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_"+attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_"+attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_"+attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes["width"].value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)/,"");
+		t.attributes["x"].value = parseFloat(r.attributes["x"].value) +3;
+		
+		// Smaller than this size won't fit anything
+		if (w < 2*12*0.59) {
+			t.textContent = "";
+			return;
+		}
+		
+		t.textContent = txt;
+		// Fit in full text width
+		if (/^ *$/.test(txt) || t.getSubStringLength(0, txt.length) < w)
+			return;
+		
+		for (var x=txt.length-2; x>0; x--) {
+			if (t.getSubStringLength(0, x+2) <= w) { 
+				t.textContent = txt.substring(0,x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes["x"] != undefined) {
+				orig_save(e, "x");
+				e.attributes["x"].value = (parseFloat(e.attributes["x"].value) - x - 10) * ratio + 10;
+				if(e.tagName == "text") e.attributes["x"].value = find_child(e.parentNode, "rect", "x") + 3;
+			}
+			if (e.attributes["width"] != undefined) {
+				orig_save(e, "width");
+				e.attributes["width"].value = parseFloat(e.attributes["width"].value) * ratio;
+			}
+		}
+		
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_child(c[i], x-10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes["x"] != undefined) {
+				orig_save(e, "x");
+				e.attributes["x"].value = 10;
+			}
+			if (e.attributes["width"] != undefined) {
+				orig_save(e, "width");
+				e.attributes["width"].value = parseInt(svg.width.baseVal.value) - (10*2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) { 
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr["width"].value);
+		var xmin = parseFloat(attr["x"].value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr["y"].value);
+		var ratio = (svg.width.baseVal.value - 2*10) / width;
+		
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+		
+		var unzoombtn = document.getElementById("unzoom");
+		unzoombtn.style["opacity"] = "1.0";
+		
+		var el = document.getElementsByTagName("g");
+		for(var i=0;i<el.length;i++){
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a["x"].value);
+			var ew = parseFloat(a["width"].value);
+			// Is it an ancestor
+			if (0 == 0) {
+				var upstack = parseFloat(a["y"].value) > ymin;
+			} else {
+				var upstack = parseFloat(a["y"].value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.style["opacity"] = "0.5";
+					zoom_parent(e);
+					e.onclick = function(e){unzoom(); zoom(this);};
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.style["display"] = "none";
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.style["display"] = "none";
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					e.onclick = function(e){zoom(this);};
+					update_text(e);
+				}
+			}
+		}
+	}
+	function unzoom() {
+		var unzoombtn = document.getElementById("unzoom");
+		unzoombtn.style["opacity"] = "0.0";
+		
+		var el = document.getElementsByTagName("g");
+		for(i=0;i<el.length;i++) {
+			el[i].style["display"] = "block";
+			el[i].style["opacity"] = "1";
+			zoom_reset(el[i]);
+			update_text(el[i]);
+		}
+	}	
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="562.0" fill="url(#background)"  />
+<text text-anchor="middle" x="600.00" y="24" font-size="17" font-family="Verdana" fill="rgb(0,0,0)"  >Flame Graph</text>
+<text text-anchor="" x="10.00" y="545" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="details" > </text>
+<text text-anchor="" x="10.00" y="24" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="unzoom" onclick="unzoom()" style="opacity:0.0;cursor:pointer" >Reset Zoom</text>
+<g class="func_g" onmouseover="s('_IO_default_xsputn (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_default_xsputn (1 samples, 0.12%)</title><rect x="958.6" y="241" width="1.4" height="15.0" fill="rgb(234,92,38)" rx="2" ry="2" />
+<text text-anchor="" x="961.60" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK9OopMapSet18find_map_at_offsetEi (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK9OopMapSet18find_map_at_offsetEi (2 samples, 0.24%)</title><rect x="176.7" y="369" width="2.9" height="15.0" fill="rgb(238,51,52)" rx="2" ry="2" />
+<text text-anchor="" x="179.72" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('mmap (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>mmap (1 samples, 0.12%)</title><rect x="679.8" y="241" width="1.4" height="15.0" fill="rgb(230,219,40)" rx="2" ry="2" />
+<text text-anchor="" x="682.77" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Threads25create_thread_roots_tasksEP11GCTaskQueue (7 samples, 0.85%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Threads25create_thread_roots_tasksEP11GCTaskQueue (7 samples, 0.85%)</title><rect x="1019.0" y="321" width="10.0" height="15.0" fill="rgb(250,0,41)" rx="2" ry="2" />
+<text text-anchor="" x="1021.96" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__memcpy_sse2_unaligned (23 samples, 2.80%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__memcpy_sse2_unaligned (23 samples, 2.80%)</title><rect x="142.2" y="337" width="33.1" height="15.0" fill="rgb(212,120,4)" rx="2" ry="2" />
+<text text-anchor="" x="145.23" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >__..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor6unlockEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor6unlockEv (1 samples, 0.12%)</title><rect x="192.5" y="369" width="1.5" height="15.0" fill="rgb(248,189,18)" rx="2" ry="2" />
+<text text-anchor="" x="195.53" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN19TemplateInterpreter17ignore_safepointsEv (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN19TemplateInterpreter17ignore_safepointsEv (2 samples, 0.24%)</title><rect x="589.2" y="401" width="2.9" height="15.0" fill="rgb(219,100,5)" rx="2" ry="2" />
+<text text-anchor="" x="592.22" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor6unlockEv (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor6unlockEv (3 samples, 0.37%)</title><rect x="119.2" y="417" width="4.3" height="15.0" fill="rgb(253,217,36)" rx="2" ry="2" />
+<text text-anchor="" x="122.23" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__memcpy_sse2_unaligned (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__memcpy_sse2_unaligned (2 samples, 0.24%)</title><rect x="613.7" y="385" width="2.8" height="15.0" fill="rgb(209,117,22)" rx="2" ry="2" />
+<text text-anchor="" x="616.65" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8df188: java/net/SocketOutputStream.write([BII)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8df188: java/net/SocketOutputStream.write([BII)V (1 samples, 0.12%)</title><rect x="54.6" y="385" width="1.4" height="15.0" fill="rgb(214,185,54)" rx="2" ry="2" />
+<text text-anchor="" x="57.56" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc7c5510: org/apache/tomcat/util/buf/C2BConverter.convert([CII)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc7c5510: org/apache/tomcat/util/buf/C2BConverter.convert([CII)V (1 samples, 0.12%)</title><rect x="53.1" y="161" width="1.5" height="15.0" fill="rgb(223,21,9)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="171.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc7862b0: org/apache/catalina/core/ContainerBase$ContainerBackgroundProcessor.processChildren(Lorg/apache/catalina/Container,Ljava/lang/ClassLoader,)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc7862b0: org/apache/catalina/core/ContainerBase$ContainerBackgroundProcessor.processChildren(Lorg/apache/catalina/Container,Ljava/lang/ClassLoader,)V (1 samples, 0.12%)</title><rect x="12.9" y="465" width="1.4" height="15.0" fill="rgb(241,190,14)" rx="2" ry="2" />
+<text text-anchor="" x="15.87" y="475.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc896d28: sun/nio/cs/ISO_8859_1$Encoder.encodeLoop(Ljava/nio/CharBuffer,Ljava/nio/ByteBuffer,)Ljava/nio/charset/CoderResult, (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc896d28: sun/nio/cs/ISO_8859_1$Encoder.encodeLoop(Ljava/nio/CharBuffer,Ljava/nio/ByteBuffer,)Ljava/nio/charset/CoderResult, (1 samples, 0.12%)</title><rect x="53.1" y="65" width="1.5" height="15.0" fill="rgb(212,104,18)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="75.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN18CardTableExtension26scavenge_contents_parallelEP16ObjectStartArrayP12MutableSpaceP8HeapWordP18PSPromotionManagerjj (133 samples, 16.20%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN18CardTableExtension26scavenge_contents_parallelEP16ObjectStartArrayP12MutableSpaceP8HeapWordP18PSPromotionManagerjj (133 samples, 16.20%)</title><rect x="298.9" y="417" width="191.1" height="15.0" fill="rgb(254,15,5)" rx="2" ry="2" />
+<text text-anchor="" x="301.89" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN18CardTableExtension2..</text>
+</g>
+<g class="func_g" onmouseover="s('0xdbd7f8f0: sun/nio/cs/StreamEncoder.write([CII)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdbd7f8f0: sun/nio/cs/StreamEncoder.write([CII)V (1 samples, 0.12%)</title><rect x="53.1" y="113" width="1.5" height="15.0" fill="rgb(215,3,20)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="123.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14PSVirtualSpace9shrink_byEm (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14PSVirtualSpace9shrink_byEm (1 samples, 0.12%)</title><rect x="679.8" y="289" width="1.4" height="15.0" fill="rgb(246,6,29)" rx="2" ry="2" />
+<text text-anchor="" x="682.77" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK8CodeHeap10find_startEPv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK8CodeHeap10find_startEPv (1 samples, 0.12%)</title><rect x="235.7" y="369" width="1.4" height="15.0" fill="rgb(228,147,25)" rx="2" ry="2" />
+<text text-anchor="" x="238.65" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__vsnprintf_chk (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__vsnprintf_chk (1 samples, 0.12%)</title><rect x="962.9" y="241" width="1.4" height="15.0" fill="rgb(237,8,48)" rx="2" ry="2" />
+<text text-anchor="" x="965.91" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN24GCAdaptivePolicyCounters27update_counters_from_policyEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN24GCAdaptivePolicyCounters27update_counters_from_policyEv (1 samples, 0.12%)</title><rect x="1016.1" y="305" width="1.4" height="15.0" fill="rgb(208,141,19)" rx="2" ry="2" />
+<text text-anchor="" x="1019.09" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN5frame13oops_entry_doEP10OopClosurePK11RegisterMap (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN5frame13oops_entry_doEP10OopClosurePK11RegisterMap (3 samples, 0.37%)</title><rect x="133.6" y="401" width="4.3" height="15.0" fill="rgb(213,42,20)" rx="2" ry="2" />
+<text text-anchor="" x="136.61" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN10MemoryPool24record_peak_memory_usageEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN10MemoryPool24record_peak_memory_usageEv (1 samples, 0.12%)</title><rect x="1008.9" y="305" width="1.4" height="15.0" fill="rgb(251,71,11)" rx="2" ry="2" />
+<text text-anchor="" x="1011.90" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK20ParallelScavengeHeap21unsafe_max_tlab_allocEP6Thread (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK20ParallelScavengeHeap21unsafe_max_tlab_allocEP6Thread (1 samples, 0.12%)</title><rect x="1006.0" y="305" width="1.5" height="15.0" fill="rgb(226,148,54)" rx="2" ry="2" />
+<text text-anchor="" x="1009.03" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12PeriodicTask14real_time_tickEi (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12PeriodicTask14real_time_tickEi (3 samples, 0.37%)</title><rect x="569.1" y="433" width="4.3" height="15.0" fill="rgb(207,20,9)" rx="2" ry="2" />
+<text text-anchor="" x="572.10" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12outputStream5printEPKcz (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12outputStream5printEPKcz (2 samples, 0.24%)</title><rect x="960.0" y="257" width="2.9" height="15.0" fill="rgb(223,15,16)" rx="2" ry="2" />
+<text text-anchor="" x="963.04" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN10PSYoungGen6resizeEmm (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN10PSYoungGen6resizeEmm (1 samples, 0.12%)</title><rect x="679.8" y="321" width="1.4" height="15.0" fill="rgb(240,17,39)" rx="2" ry="2" />
+<text text-anchor="" x="682.77" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN18CardTableExtension17scavenge_contentsEP16ObjectStartArrayP12MutableSpaceP8HeapWordP18PSPromotionManager (40 samples, 4.87%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN18CardTableExtension17scavenge_contentsEP16ObjectStartArrayP12MutableSpaceP8HeapWordP18PSPromotionManager (40 samples, 4.87%)</title><rect x="494.4" y="417" width="57.5" height="15.0" fill="rgb(243,72,17)" rx="2" ry="2" />
+<text text-anchor="" x="497.36" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN18C..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN18AdaptiveSizePolicy20minor_collection_endEN7GCCause5CauseE (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN18AdaptiveSizePolicy20minor_collection_endEN7GCCause5CauseE (1 samples, 0.12%)</title><rect x="991.7" y="321" width="1.4" height="15.0" fill="rgb(225,137,25)" rx="2" ry="2" />
+<text text-anchor="" x="994.66" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN9CodeCache9find_blobEPv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN9CodeCache9find_blobEPv (1 samples, 0.12%)</title><rect x="132.2" y="385" width="1.4" height="15.0" fill="rgb(230,175,8)" rx="2" ry="2" />
+<text text-anchor="" x="135.17" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_IO_padn (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_padn (1 samples, 0.12%)</title><rect x="961.5" y="209" width="1.4" height="15.0" fill="rgb(240,195,39)" rx="2" ry="2" />
+<text text-anchor="" x="964.47" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc544ae0: org/apache/catalina/connector/CoyoteAdapter.service(Lorg/apache/coyote/Request,Lorg/apache/coyote/Response,)V (29 samples, 3.53%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc544ae0: org/apache/catalina/connector/CoyoteAdapter.service(Lorg/apache/coyote/Request,Lorg/apache/coyote/Response,)V (29 samples, 3.53%)</title><rect x="14.3" y="433" width="41.7" height="15.0" fill="rgb(205,74,5)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN22ThreadLocalAllocBuffer31accumulate_statistics_before_gcEv (5 samples, 0.61%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN22ThreadLocalAllocBuffer31accumulate_statistics_before_gcEv (5 samples, 0.61%)</title><rect x="1000.3" y="321" width="7.2" height="15.0" fill="rgb(230,75,43)" rx="2" ry="2" />
+<text text-anchor="" x="1003.28" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14RuntimeService20record_safepoint_endEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14RuntimeService20record_safepoint_endEv (1 samples, 0.12%)</title><rect x="587.8" y="401" width="1.4" height="15.0" fill="rgb(219,38,28)" rx="2" ry="2" />
+<text text-anchor="" x="590.78" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__vsnprintf_chk (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__vsnprintf_chk (1 samples, 0.12%)</title><rect x="967.2" y="289" width="1.5" height="15.0" fill="rgb(213,100,15)" rx="2" ry="2" />
+<text text-anchor="" x="970.22" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__vsnprintf_chk (5 samples, 0.61%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__vsnprintf_chk (5 samples, 0.61%)</title><rect x="970.1" y="273" width="7.2" height="15.0" fill="rgb(219,152,37)" rx="2" ry="2" />
+<text text-anchor="" x="973.10" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN8Universe19print_heap_after_gcEP12outputStreamb (8 samples, 0.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN8Universe19print_heap_after_gcEP12outputStreamb (8 samples, 0.97%)</title><rect x="955.7" y="305" width="11.5" height="15.0" fill="rgb(248,93,7)" rx="2" ry="2" />
+<text text-anchor="" x="958.72" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('gettimeofday (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>gettimeofday (1 samples, 0.12%)</title><rect x="682.6" y="273" width="1.5" height="15.0" fill="rgb(205,0,2)" rx="2" ry="2" />
+<text text-anchor="" x="685.64" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12stringStream5writeEPKcm (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12stringStream5writeEPKcm (1 samples, 0.12%)</title><rect x="984.5" y="257" width="1.4" height="15.0" fill="rgb(245,154,15)" rx="2" ry="2" />
+<text text-anchor="" x="987.47" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK11RuntimeStub24caller_must_gc_argumentsEP10JavaThread (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK11RuntimeStub24caller_must_gc_argumentsEP10JavaThread (1 samples, 0.12%)</title><rect x="238.5" y="385" width="1.5" height="15.0" fill="rgb(214,0,39)" rx="2" ry="2" />
+<text text-anchor="" x="241.53" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN13instanceKlass17oop_push_contentsEP18PSPromotionManagerP7oopDesc (6 samples, 0.73%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN13instanceKlass17oop_push_contentsEP18PSPromotionManagerP7oopDesc (6 samples, 0.73%)</title><rect x="475.7" y="401" width="8.6" height="15.0" fill="rgb(211,157,7)" rx="2" ry="2" />
+<text text-anchor="" x="478.68" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN8VMThread4loopEv (328 samples, 39.95%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN8VMThread4loopEv (328 samples, 39.95%)</title><rect x="579.2" y="433" width="471.4" height="15.0" fill="rgb(236,124,1)" rx="2" ry="2" />
+<text text-anchor="" x="582.16" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN8VMThread4loopEv</text>
+</g>
+<g class="func_g" onmouseover="s('__lll_unlock_wake (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__lll_unlock_wake (1 samples, 0.12%)</title><rect x="577.7" y="337" width="1.5" height="15.0" fill="rgb(245,208,42)" rx="2" ry="2" />
+<text text-anchor="" x="580.72" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12CodeHeapPool16get_memory_usageEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12CodeHeapPool16get_memory_usageEv (1 samples, 0.12%)</title><rect x="1013.2" y="289" width="1.5" height="15.0" fill="rgb(216,3,54)" rx="2" ry="2" />
+<text text-anchor="" x="1016.22" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor4waitEblb (4 samples, 0.49%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor4waitEblb (4 samples, 0.49%)</title><rect x="573.4" y="417" width="5.8" height="15.0" fill="rgb(209,145,30)" rx="2" ry="2" />
+<text text-anchor="" x="576.41" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc4187a8: org/apache/jasper/runtime/JspFactoryImpl.internalReleasePageContext(Ljavax/servlet/jsp/PageContext,)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc4187a8: org/apache/jasper/runtime/JspFactoryImpl.internalReleasePageContext(Ljavax/servlet/jsp/PageContext,)V (1 samples, 0.12%)</title><rect x="53.1" y="241" width="1.5" height="15.0" fill="rgb(238,13,8)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12stringStream5writeEPKcm (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12stringStream5writeEPKcm (1 samples, 0.12%)</title><rect x="965.8" y="257" width="1.4" height="15.0" fill="rgb(227,106,41)" rx="2" ry="2" />
+<text text-anchor="" x="968.79" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN20SafepointSynchronize16do_cleanup_tasksEv (23 samples, 2.80%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN20SafepointSynchronize16do_cleanup_tasksEv (23 samples, 2.80%)</title><rect x="616.5" y="401" width="33.1" height="15.0" fill="rgb(221,14,15)" rx="2" ry="2" />
+<text text-anchor="" x="619.53" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_Z..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12stringStream5writeEPKcm (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12stringStream5writeEPKcm (1 samples, 0.12%)</title><rect x="983.0" y="257" width="1.5" height="15.0" fill="rgb(221,71,9)" rx="2" ry="2" />
+<text text-anchor="" x="986.03" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN20PSGenerationCounters10update_allEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN20PSGenerationCounters10update_allEv (1 samples, 0.12%)</title><rect x="994.5" y="305" width="1.5" height="15.0" fill="rgb(206,31,3)" rx="2" ry="2" />
+<text text-anchor="" x="997.53" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN17InlineCacheBuffer20update_inline_cachesEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN17InlineCacheBuffer20update_inline_cachesEv (1 samples, 0.12%)</title><rect x="618.0" y="385" width="1.4" height="15.0" fill="rgb(238,209,51)" rx="2" ry="2" />
+<text text-anchor="" x="620.97" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN8VMThread3runEv (328 samples, 39.95%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN8VMThread3runEv (328 samples, 39.95%)</title><rect x="579.2" y="449" width="471.4" height="15.0" fill="rgb(212,179,28)" rx="2" ry="2" />
+<text text-anchor="" x="582.16" y="459.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN8VMThread3runEv</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN16SystemDictionary7oops_doEP10OopClosure (39 samples, 4.75%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN16SystemDictionary7oops_doEP10OopClosure (39 samples, 4.75%)</title><rect x="240.0" y="417" width="56.0" height="15.0" fill="rgb(228,118,30)" rx="2" ry="2" />
+<text text-anchor="" x="242.96" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN16..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN8VMThread18evaluate_operationEP12VM_Operation (260 samples, 31.67%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN8VMThread18evaluate_operationEP12VM_Operation (260 samples, 31.67%)</title><rect x="674.0" y="417" width="373.7" height="15.0" fill="rgb(212,123,22)" rx="2" ry="2" />
+<text text-anchor="" x="677.02" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN8VMThread18evaluate_operationEP12VM_Operation</text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK12MutableSpace8print_onEP12outputStream (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK12MutableSpace8print_onEP12outputStream (1 samples, 0.12%)</title><rect x="962.9" y="273" width="1.4" height="15.0" fill="rgb(248,44,7)" rx="2" ry="2" />
+<text text-anchor="" x="965.91" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN22MutableSpaceUsedHelper11take_sampleEv (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN22MutableSpaceUsedHelper11take_sampleEv (2 samples, 0.24%)</title><rect x="569.1" y="385" width="2.9" height="15.0" fill="rgb(232,0,29)" rx="2" ry="2" />
+<text text-anchor="" x="572.10" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_IO_default_xsputn (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_default_xsputn (1 samples, 0.12%)</title><rect x="977.3" y="241" width="1.4" height="15.0" fill="rgb(240,206,51)" rx="2" ry="2" />
+<text text-anchor="" x="980.28" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('UseCompilerSafepoints (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>UseCompilerSafepoints (2 samples, 0.24%)</title><rect x="96.2" y="497" width="2.9" height="15.0" fill="rgb(244,203,47)" rx="2" ry="2" />
+<text text-anchor="" x="99.24" y="507.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os18pd_uncommit_memoryEPcm (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os18pd_uncommit_memoryEPcm (1 samples, 0.12%)</title><rect x="679.8" y="257" width="1.4" height="15.0" fill="rgb(211,189,4)" rx="2" ry="2" />
+<text text-anchor="" x="682.77" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('pthread_cond_timedwait@@GLIBC_2.3.2 (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>pthread_cond_timedwait@@GLIBC_2.3.2 (3 samples, 0.37%)</title><rect x="573.4" y="369" width="4.3" height="15.0" fill="rgb(223,100,21)" rx="2" ry="2" />
+<text text-anchor="" x="576.41" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14NMethodSweeper11scan_stacksEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14NMethodSweeper11scan_stacksEv (1 samples, 0.12%)</title><rect x="616.5" y="385" width="1.5" height="15.0" fill="rgb(211,27,48)" rx="2" ry="2" />
+<text text-anchor="" x="619.53" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN18ObjectSynchronizer21deflate_idle_monitorsEv (18 samples, 2.19%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN18ObjectSynchronizer21deflate_idle_monitorsEv (18 samples, 2.19%)</title><rect x="619.4" y="385" width="25.9" height="15.0" fill="rgb(209,129,45)" rx="2" ry="2" />
+<text text-anchor="" x="622.40" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14PSRootsClosureILb0EE6do_oopEPj (23 samples, 2.80%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14PSRootsClosureILb0EE6do_oopEPj (23 samples, 2.80%)</title><rect x="142.2" y="369" width="33.1" height="15.0" fill="rgb(226,226,23)" rx="2" ry="2" />
+<text text-anchor="" x="145.23" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_Z..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN20SafepointSynchronize3endEv (15 samples, 1.83%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN20SafepointSynchronize3endEv (15 samples, 1.83%)</title><rect x="580.6" y="417" width="21.6" height="15.0" fill="rgb(242,6,17)" rx="2" ry="2" />
+<text text-anchor="" x="583.60" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_..</text>
+</g>
+<g class="func_g" onmouseover="s('start_thread (662 samples, 80.63%)')" onmouseout="c()" onclick="zoom(this)">
+<title>start_thread (662 samples, 80.63%)</title><rect x="99.1" y="481" width="951.5" height="15.0" fill="rgb(228,22,41)" rx="2" ry="2" />
+<text text-anchor="" x="102.11" y="491.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >start_thread</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN23TraceMemoryManagerStatsC2EbN7GCCause5CauseEbbbbbbb (5 samples, 0.61%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN23TraceMemoryManagerStatsC2EbN7GCCause5CauseEbbbbbbb (5 samples, 0.61%)</title><rect x="1007.5" y="321" width="7.2" height="15.0" fill="rgb(220,123,26)" rx="2" ry="2" />
+<text text-anchor="" x="1010.47" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc6bb5b8: org/apache/jasper/servlet/JspServlet.service(Ljavax/servlet/http/HttpServletRequest,Ljavax/servlet/http/HttpServletResponse,)V (28 samples, 3.41%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc6bb5b8: org/apache/jasper/servlet/JspServlet.service(Ljavax/servlet/http/HttpServletRequest,Ljavax/servlet/http/HttpServletResponse,)V (28 samples, 3.41%)</title><rect x="14.3" y="353" width="40.3" height="15.0" fill="rgb(241,52,34)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor6unlockEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor6unlockEv (1 samples, 0.12%)</title><rect x="551.9" y="433" width="1.4" height="15.0" fill="rgb(205,210,11)" rx="2" ry="2" />
+<text text-anchor="" x="554.85" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN11StringTable7oops_doEP10OopClosure (74 samples, 9.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN11StringTable7oops_doEP10OopClosure (74 samples, 9.01%)</title><rect x="849.4" y="321" width="106.3" height="15.0" fill="rgb(246,189,30)" rx="2" ry="2" />
+<text text-anchor="" x="852.37" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN11StringTa..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14JNIHandleBlock7oops_doEP10OopClosure (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14JNIHandleBlock7oops_doEP10OopClosure (3 samples, 0.37%)</title><rect x="133.6" y="385" width="4.3" height="15.0" fill="rgb(219,168,11)" rx="2" ry="2" />
+<text text-anchor="" x="136.61" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN6GCTaskC1Ev (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN6GCTaskC1Ev (1 samples, 0.12%)</title><rect x="1027.6" y="305" width="1.4" height="15.0" fill="rgb(218,86,24)" rx="2" ry="2" />
+<text text-anchor="" x="1030.59" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12outputStream5printEPKcz (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12outputStream5printEPKcz (1 samples, 0.12%)</title><rect x="962.9" y="257" width="1.4" height="15.0" fill="rgb(233,6,43)" rx="2" ry="2" />
+<text text-anchor="" x="965.91" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN19constantPoolOopDesc21impl_signature_ref_atEib (5 samples, 0.61%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN19constantPoolOopDesc21impl_signature_ref_atEib (5 samples, 0.61%)</title><rect x="199.7" y="385" width="7.2" height="15.0" fill="rgb(221,152,37)" rx="2" ry="2" />
+<text text-anchor="" x="202.72" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7nmethod24oops_do_marking_epilogueEv (10 samples, 1.22%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7nmethod24oops_do_marking_epilogueEv (10 samples, 1.22%)</title><rect x="1029.0" y="321" width="14.4" height="15.0" fill="rgb(247,142,44)" rx="2" ry="2" />
+<text text-anchor="" x="1032.03" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN9CodeCache18largest_free_blockEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN9CodeCache18largest_free_blockEv (1 samples, 0.12%)</title><rect x="616.5" y="369" width="1.5" height="15.0" fill="rgb(233,23,29)" rx="2" ry="2" />
+<text text-anchor="" x="619.53" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc6bb990: org/apache/jasper/servlet/JspServlet.serviceJspFile(Ljavax/servlet/http/HttpServletRequest,Ljavax/servlet/http/HttpServletResponse,Ljava/lang/String,Ljava/lang/Throwable,Z)V (28 samples, 3.41%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc6bb990: org/apache/jasper/servlet/JspServlet.serviceJspFile(Ljavax/servlet/http/HttpServletRequest,Ljavax/servlet/http/HttpServletResponse,Ljava/lang/String,Ljava/lang/Throwable,Z)V (28 samples, 3.41%)</title><rect x="14.3" y="337" width="40.3" height="15.0" fill="rgb(237,87,41)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('_IO_default_xsputn (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_default_xsputn (1 samples, 0.12%)</title><rect x="975.8" y="241" width="1.5" height="15.0" fill="rgb(229,148,15)" rx="2" ry="2" />
+<text text-anchor="" x="978.85" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN25SerialOldToYoungRootsTask5do_itEP13GCTaskManagerj (40 samples, 4.87%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN25SerialOldToYoungRootsTask5do_itEP13GCTaskManagerj (40 samples, 4.87%)</title><rect x="494.4" y="433" width="57.5" height="15.0" fill="rgb(242,163,14)" rx="2" ry="2" />
+<text text-anchor="" x="497.36" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN25S..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14oop_Relocation11unpack_dataEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14oop_Relocation11unpack_dataEv (1 samples, 0.12%)</title><rect x="1042.0" y="305" width="1.4" height="15.0" fill="rgb(223,221,1)" rx="2" ry="2" />
+<text text-anchor="" x="1044.96" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc6595c0: org/apache/catalina/loader/WebappClassLoader.closeJARs(Z)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc6595c0: org/apache/catalina/loader/WebappClassLoader.closeJARs(Z)V (1 samples, 0.12%)</title><rect x="12.9" y="417" width="1.4" height="15.0" fill="rgb(233,42,4)" rx="2" ry="2" />
+<text text-anchor="" x="15.87" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor5IWaitEP6Threadl (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor5IWaitEP6Threadl (3 samples, 0.37%)</title><rect x="490.0" y="401" width="4.4" height="15.0" fill="rgb(205,2,1)" rx="2" ry="2" />
+<text text-anchor="" x="493.05" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdce965a8: org/apache/jsp/test_jsp._jspService(Ljavax/servlet/http/HttpServletRequest,Ljavax/servlet/http/HttpServletResponse,)V (28 samples, 3.41%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdce965a8: org/apache/jsp/test_jsp._jspService(Ljavax/servlet/http/HttpServletRequest,Ljavax/servlet/http/HttpServletResponse,)V (28 samples, 3.41%)</title><rect x="14.3" y="273" width="40.3" height="15.0" fill="rgb(205,188,44)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN10PSYoungGen13resize_spacesEmm (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN10PSYoungGen13resize_spacesEmm (1 samples, 0.12%)</title><rect x="678.3" y="321" width="1.5" height="15.0" fill="rgb(244,157,39)" rx="2" ry="2" />
+<text text-anchor="" x="681.33" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN21AdaptivePaddedAverage6sampleEf (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN21AdaptivePaddedAverage6sampleEf (1 samples, 0.12%)</title><rect x="991.7" y="305" width="1.4" height="15.0" fill="rgb(221,47,38)" rx="2" ry="2" />
+<text text-anchor="" x="994.66" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('pthread_cond_signal@@GLIBC_2.3.2 (97 samples, 11.81%)')" onmouseout="c()" onclick="zoom(this)">
+<title>pthread_cond_signal@@GLIBC_2.3.2 (97 samples, 11.81%)</title><rect x="1050.6" y="497" width="139.4" height="15.0" fill="rgb(217,38,29)" rx="2" ry="2" />
+<text text-anchor="" x="1053.58" y="507.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >pthread_cond_sign..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor5ILockEP6Thread (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor5ILockEP6Thread (1 samples, 0.12%)</title><rect x="987.3" y="289" width="1.5" height="15.0" fill="rgb(238,208,48)" rx="2" ry="2" />
+<text text-anchor="" x="990.34" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_IO_vfprintf (4 samples, 0.49%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_vfprintf (4 samples, 0.49%)</title><rect x="971.5" y="257" width="5.8" height="15.0" fill="rgb(238,211,44)" rx="2" ry="2" />
+<text text-anchor="" x="974.53" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdce77328: org/apache/jasper/runtime/JspWriterImpl.flushBuffer()V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdce77328: org/apache/jasper/runtime/JspWriterImpl.flushBuffer()V (1 samples, 0.12%)</title><rect x="53.1" y="209" width="1.5" height="15.0" fill="rgb(254,139,12)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN5Arena4growEmN17AllocFailStrategy13AllocFailEnumE (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN5Arena4growEmN17AllocFailStrategy13AllocFailEnumE (2 samples, 0.24%)</title><rect x="1024.7" y="305" width="2.9" height="15.0" fill="rgb(205,170,39)" rx="2" ry="2" />
+<text text-anchor="" x="1027.71" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_IO_str_init_static_internal (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_str_init_static_internal (1 samples, 0.12%)</title><rect x="1043.4" y="289" width="1.4" height="15.0" fill="rgb(247,44,20)" rx="2" ry="2" />
+<text text-anchor="" x="1046.40" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc7860f0: org/apache/catalina/core/ContainerBase$ContainerBackgroundProcessor.run()V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc7860f0: org/apache/catalina/core/ContainerBase$ContainerBackgroundProcessor.run()V (1 samples, 0.12%)</title><rect x="12.9" y="481" width="1.4" height="15.0" fill="rgb(244,35,20)" rx="2" ry="2" />
+<text text-anchor="" x="15.87" y="491.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('mprotect (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>mprotect (2 samples, 0.24%)</title><rect x="666.8" y="385" width="2.9" height="15.0" fill="rgb(226,211,31)" rx="2" ry="2" />
+<text text-anchor="" x="669.83" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_IO_vfprintf (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_vfprintf (1 samples, 0.12%)</title><rect x="962.9" y="225" width="1.4" height="15.0" fill="rgb(205,163,15)" rx="2" ry="2" />
+<text text-anchor="" x="965.91" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN10PSYoungGen17resize_generationEmm (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN10PSYoungGen17resize_generationEmm (1 samples, 0.12%)</title><rect x="679.8" y="305" width="1.4" height="15.0" fill="rgb(213,116,10)" rx="2" ry="2" />
+<text text-anchor="" x="682.77" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('all (821 samples, 100%)')" onmouseout="c()" onclick="zoom(this)">
+<title>all (821 samples, 100%)</title><rect x="10.0" y="513" width="1180.0" height="15.0" fill="rgb(214,108,51)" rx="2" ry="2" />
+<text text-anchor="" x="13.00" y="523.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_IO_vfprintf (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_vfprintf (1 samples, 0.12%)</title><rect x="977.3" y="257" width="1.4" height="15.0" fill="rgb(212,48,18)" rx="2" ry="2" />
+<text text-anchor="" x="980.28" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_IO_vfprintf (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_vfprintf (2 samples, 0.24%)</title><rect x="960.0" y="225" width="2.9" height="15.0" fill="rgb(246,130,53)" rx="2" ry="2" />
+<text text-anchor="" x="963.04" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('mprotect (12 samples, 1.46%)')" onmouseout="c()" onclick="zoom(this)">
+<title>mprotect (12 samples, 1.46%)</title><rect x="649.6" y="369" width="17.2" height="15.0" fill="rgb(206,52,41)" rx="2" ry="2" />
+<text text-anchor="" x="652.59" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN11StringTable14buckets_unlinkEP17BoolObjectClosureiiPiS2_ (115 samples, 14.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN11StringTable14buckets_unlinkEP17BoolObjectClosureiiPiS2_ (115 samples, 14.01%)</title><rect x="684.1" y="321" width="165.3" height="15.0" fill="rgb(251,220,6)" rx="2" ry="2" />
+<text text-anchor="" x="687.08" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN11StringTable14buc..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN10Management9timestampEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN10Management9timestampEv (1 samples, 0.12%)</title><rect x="1011.8" y="289" width="1.4" height="15.0" fill="rgb(206,75,52)" rx="2" ry="2" />
+<text text-anchor="" x="1014.78" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc7862b0: org/apache/catalina/core/ContainerBase$ContainerBackgroundProcessor.processChildren(Lorg/apache/catalina/Container,Ljava/lang/ClassLoader,)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc7862b0: org/apache/catalina/core/ContainerBase$ContainerBackgroundProcessor.processChildren(Lorg/apache/catalina/Container,Ljava/lang/ClassLoader,)V (1 samples, 0.12%)</title><rect x="12.9" y="449" width="1.4" height="15.0" fill="rgb(223,121,15)" rx="2" ry="2" />
+<text text-anchor="" x="15.87" y="459.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN22ParallelTaskTerminator17offer_terminationEP20TerminatorTerminator (11 samples, 1.34%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN22ParallelTaskTerminator17offer_terminationEP20TerminatorTerminator (11 samples, 1.34%)</title><rect x="553.3" y="417" width="15.8" height="15.0" fill="rgb(226,145,31)" rx="2" ry="2" />
+<text text-anchor="" x="556.29" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK8PSOldGen8print_onEP12outputStream (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK8PSOldGen8print_onEP12outputStream (1 samples, 0.12%)</title><rect x="984.5" y="289" width="1.4" height="15.0" fill="rgb(206,115,53)" rx="2" ry="2" />
+<text text-anchor="" x="987.47" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__strncpy_sse2_unaligned (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__strncpy_sse2_unaligned (1 samples, 0.12%)</title><rect x="984.5" y="241" width="1.4" height="15.0" fill="rgb(209,109,50)" rx="2" ry="2" />
+<text text-anchor="" x="987.47" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__pthread_mutex_cond_lock (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__pthread_mutex_cond_lock (1 samples, 0.12%)</title><rect x="990.2" y="241" width="1.5" height="15.0" fill="rgb(246,25,32)" rx="2" ry="2" />
+<text text-anchor="" x="993.22" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN15StatSamplerTask4taskEv (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN15StatSamplerTask4taskEv (3 samples, 0.37%)</title><rect x="569.1" y="417" width="4.3" height="15.0" fill="rgb(215,117,37)" rx="2" ry="2" />
+<text text-anchor="" x="572.10" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK10PSYoungGen8print_onEP12outputStream (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK10PSYoungGen8print_onEP12outputStream (2 samples, 0.24%)</title><rect x="960.0" y="273" width="2.9" height="15.0" fill="rgb(210,121,52)" rx="2" ry="2" />
+<text text-anchor="" x="963.04" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK16ObjectStartArray22object_starts_in_rangeEP8HeapWordS1_ (4 samples, 0.49%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK16ObjectStartArray22object_starts_in_rangeEP8HeapWordS1_ (4 samples, 0.49%)</title><rect x="484.3" y="401" width="5.7" height="15.0" fill="rgb(236,40,4)" rx="2" ry="2" />
+<text text-anchor="" x="487.30" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc41e7c0: org/apache/jasper/runtime/PageContextImpl.release()V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc41e7c0: org/apache/jasper/runtime/PageContextImpl.release()V (1 samples, 0.12%)</title><rect x="53.1" y="225" width="1.5" height="15.0" fill="rgb(233,159,52)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN22ThreadLocalAllocBuffer16resize_all_tlabsEv (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN22ThreadLocalAllocBuffer16resize_all_tlabsEv (2 samples, 0.24%)</title><rect x="997.4" y="321" width="2.9" height="15.0" fill="rgb(244,173,37)" rx="2" ry="2" />
+<text text-anchor="" x="1000.41" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc966cb0: org/apache/jasper/servlet/JspServletWrapper.service(Ljavax/servlet/http/HttpServletRequest,Ljavax/servlet/http/HttpServletResponse,Z)V (28 samples, 3.41%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc966cb0: org/apache/jasper/servlet/JspServletWrapper.service(Ljavax/servlet/http/HttpServletRequest,Ljavax/servlet/http/HttpServletResponse,Z)V (28 samples, 3.41%)</title><rect x="14.3" y="321" width="40.3" height="15.0" fill="rgb(251,81,28)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK10PSYoungGen8print_onEP12outputStream (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK10PSYoungGen8print_onEP12outputStream (3 samples, 0.37%)</title><rect x="978.7" y="289" width="4.3" height="15.0" fill="rgb(243,181,22)" rx="2" ry="2" />
+<text text-anchor="" x="981.72" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN9OopMapSet19update_register_mapEPK5frameP11RegisterMap (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN9OopMapSet19update_register_mapEPK5frameP11RegisterMap (1 samples, 0.12%)</title><rect x="237.1" y="385" width="1.4" height="15.0" fill="rgb(239,142,47)" rx="2" ry="2" />
+<text text-anchor="" x="240.09" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os13PlatformEvent4parkEv (10 samples, 1.22%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os13PlatformEvent4parkEv (10 samples, 1.22%)</title><rect x="104.9" y="385" width="14.3" height="15.0" fill="rgb(244,228,31)" rx="2" ry="2" />
+<text text-anchor="" x="107.86" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12outputStream8print_crEPKcz (5 samples, 0.61%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12outputStream8print_crEPKcz (5 samples, 0.61%)</title><rect x="970.1" y="289" width="7.2" height="15.0" fill="rgb(205,47,29)" rx="2" ry="2" />
+<text text-anchor="" x="973.10" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN18PSPromotionManager22copy_to_survivor_spaceILb0EEEP7oopDescS2_ (23 samples, 2.80%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN18PSPromotionManager22copy_to_survivor_spaceILb0EEEP7oopDescS2_ (23 samples, 2.80%)</title><rect x="142.2" y="353" width="33.1" height="15.0" fill="rgb(206,76,44)" rx="2" ry="2" />
+<text text-anchor="" x="145.23" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_Z..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN10JavaThread7oops_doEP10OopClosureP15CodeBlobClosure (80 samples, 9.74%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN10JavaThread7oops_doEP10OopClosureP15CodeBlobClosure (80 samples, 9.74%)</title><rect x="125.0" y="417" width="115.0" height="15.0" fill="rgb(239,94,34)" rx="2" ry="2" />
+<text text-anchor="" x="127.98" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN10JavaThrea..</text>
+</g>
+<g class="func_g" onmouseover="s('pthread_cond_wait@@GLIBC_2.3.2 (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>pthread_cond_wait@@GLIBC_2.3.2 (3 samples, 0.37%)</title><rect x="490.0" y="369" width="4.4" height="15.0" fill="rgb(213,192,53)" rx="2" ry="2" />
+<text text-anchor="" x="493.05" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN17ScavengeRootsTask5do_itEP13GCTaskManagerj (41 samples, 4.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN17ScavengeRootsTask5do_itEP13GCTaskManagerj (41 samples, 4.99%)</title><rect x="240.0" y="433" width="58.9" height="15.0" fill="rgb(208,117,10)" rx="2" ry="2" />
+<text text-anchor="" x="242.96" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN17S..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK5frame20entry_frame_is_firstEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK5frame20entry_frame_is_firstEv (1 samples, 0.12%)</title><rect x="232.8" y="401" width="1.4" height="15.0" fill="rgb(230,126,20)" rx="2" ry="2" />
+<text text-anchor="" x="235.78" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN5Ticks5stampEv (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN5Ticks5stampEv (2 samples, 0.24%)</title><rect x="681.2" y="305" width="2.9" height="15.0" fill="rgb(253,162,16)" rx="2" ry="2" />
+<text text-anchor="" x="684.21" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__strchr_sse2 (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__strchr_sse2 (1 samples, 0.12%)</title><rect x="980.2" y="257" width="1.4" height="15.0" fill="rgb(233,98,43)" rx="2" ry="2" />
+<text text-anchor="" x="983.16" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN13instanceKlass10methods_doEPFvP13methodOopDescE (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN13instanceKlass10methods_doEPFvP13methodOopDescE (2 samples, 0.24%)</title><rect x="646.7" y="369" width="2.9" height="15.0" fill="rgb(243,135,46)" rx="2" ry="2" />
+<text text-anchor="" x="649.71" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc905f88: org/apache/catalina/core/ApplicationFilterChain.internalDoFilter(Ljavax/servlet/ServletRequest,Ljavax/servlet/ServletResponse,)V (28 samples, 3.41%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc905f88: org/apache/catalina/core/ApplicationFilterChain.internalDoFilter(Ljavax/servlet/ServletRequest,Ljavax/servlet/ServletResponse,)V (28 samples, 3.41%)</title><rect x="14.3" y="369" width="40.3" height="15.0" fill="rgb(244,171,54)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('_IO_vfprintf (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_vfprintf (2 samples, 0.24%)</title><rect x="1047.7" y="385" width="2.9" height="15.0" fill="rgb(222,57,41)" rx="2" ry="2" />
+<text text-anchor="" x="1050.71" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_IO_vfprintf (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_vfprintf (3 samples, 0.37%)</title><rect x="955.7" y="257" width="4.3" height="15.0" fill="rgb(221,136,53)" rx="2" ry="2" />
+<text text-anchor="" x="958.72" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdbd80468: sun/nio/cs/StreamEncoder.implWrite([CII)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdbd80468: sun/nio/cs/StreamEncoder.implWrite([CII)V (1 samples, 0.12%)</title><rect x="53.1" y="97" width="1.5" height="15.0" fill="rgb(223,31,16)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="107.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('mprotect (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>mprotect (1 samples, 0.12%)</title><rect x="11.4" y="465" width="1.5" height="15.0" fill="rgb(219,130,40)" rx="2" ry="2" />
+<text text-anchor="" x="14.44" y="475.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('mprotect (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>mprotect (2 samples, 0.24%)</title><rect x="96.2" y="465" width="2.9" height="15.0" fill="rgb(222,199,29)" rx="2" ry="2" />
+<text text-anchor="" x="99.24" y="475.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdbf19118: java/nio/CharBuffer.arrayOffset()I (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdbf19118: java/nio/CharBuffer.arrayOffset()I (1 samples, 0.12%)</title><rect x="53.1" y="33" width="1.5" height="15.0" fill="rgb(222,71,28)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="43.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12GCTaskThread3runEv (327 samples, 39.83%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12GCTaskThread3runEv (327 samples, 39.83%)</title><rect x="99.1" y="449" width="470.0" height="15.0" fill="rgb(226,222,38)" rx="2" ry="2" />
+<text text-anchor="" x="102.11" y="459.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN12GCTaskThread3runEv</text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK9OopMapSet18find_map_at_offsetEi (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK9OopMapSet18find_map_at_offsetEi (1 samples, 0.12%)</title><rect x="237.1" y="369" width="1.4" height="15.0" fill="rgb(248,92,44)" rx="2" ry="2" />
+<text text-anchor="" x="240.09" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK5frame6senderEP11RegisterMap (4 samples, 0.49%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK5frame6senderEP11RegisterMap (4 samples, 0.49%)</title><rect x="234.2" y="401" width="5.8" height="15.0" fill="rgb(241,194,52)" rx="2" ry="2" />
+<text text-anchor="" x="237.21" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14PSRootsClosureILb0EE6do_oopEPP7oopDesc (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14PSRootsClosureILb0EE6do_oopEPP7oopDesc (2 samples, 0.24%)</title><rect x="196.8" y="369" width="2.9" height="15.0" fill="rgb(248,75,10)" rx="2" ry="2" />
+<text text-anchor="" x="199.85" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK12VM_Operation18is_cheap_allocatedEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK12VM_Operation18is_cheap_allocatedEv (1 samples, 0.12%)</title><rect x="1046.3" y="401" width="1.4" height="15.0" fill="rgb(241,112,10)" rx="2" ry="2" />
+<text text-anchor="" x="1049.27" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK12MutableSpace8print_onEP12outputStream (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK12MutableSpace8print_onEP12outputStream (1 samples, 0.12%)</title><rect x="983.0" y="289" width="1.5" height="15.0" fill="rgb(236,210,36)" rx="2" ry="2" />
+<text text-anchor="" x="986.03" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12outputStream5printEPKcz (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12outputStream5printEPKcz (2 samples, 0.24%)</title><rect x="978.7" y="273" width="2.9" height="15.0" fill="rgb(224,61,29)" rx="2" ry="2" />
+<text text-anchor="" x="981.72" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12CounterDecay9do_methodEP13methodOopDesc (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12CounterDecay9do_methodEP13methodOopDesc (1 samples, 0.12%)</title><rect x="646.7" y="353" width="1.4" height="15.0" fill="rgb(229,222,44)" rx="2" ry="2" />
+<text text-anchor="" x="649.71" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12stringStream5writeEPKcm (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12stringStream5writeEPKcm (1 samples, 0.12%)</title><rect x="978.7" y="257" width="1.5" height="15.0" fill="rgb(239,98,10)" rx="2" ry="2" />
+<text text-anchor="" x="981.72" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('SpinPause (27 samples, 3.29%)')" onmouseout="c()" onclick="zoom(this)">
+<title>SpinPause (27 samples, 3.29%)</title><rect x="57.4" y="497" width="38.8" height="15.0" fill="rgb(238,183,8)" rx="2" ry="2" />
+<text text-anchor="" x="60.43" y="507.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Spi..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN19NonTieredCompPolicy17do_safepoint_workEv (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN19NonTieredCompPolicy17do_safepoint_workEv (3 samples, 0.37%)</title><rect x="645.3" y="385" width="4.3" height="15.0" fill="rgb(217,74,13)" rx="2" ry="2" />
+<text text-anchor="" x="648.27" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14PSRootsClosureILb0EE6do_oopEPP7oopDesc (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14PSRootsClosureILb0EE6do_oopEPP7oopDesc (1 samples, 0.12%)</title><rect x="194.0" y="385" width="1.4" height="15.0" fill="rgb(228,123,46)" rx="2" ry="2" />
+<text text-anchor="" x="196.97" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os13PlatformEvent4parkEl (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os13PlatformEvent4parkEl (3 samples, 0.37%)</title><rect x="669.7" y="385" width="4.3" height="15.0" fill="rgb(239,1,4)" rx="2" ry="2" />
+<text text-anchor="" x="672.71" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8959e8: org/apache/tomcat/util/buf/WriteConvertor.write([CII)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8959e8: org/apache/tomcat/util/buf/WriteConvertor.write([CII)V (1 samples, 0.12%)</title><rect x="53.1" y="145" width="1.5" height="15.0" fill="rgb(217,223,40)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="155.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN20ParallelScavengeHeap19failed_mem_allocateEm (256 samples, 31.18%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN20ParallelScavengeHeap19failed_mem_allocateEm (256 samples, 31.18%)</title><rect x="678.3" y="369" width="368.0" height="15.0" fill="rgb(248,22,2)" rx="2" ry="2" />
+<text text-anchor="" x="681.33" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN20ParallelScavengeHeap19failed_mem_allocateEm</text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK12VirtualSpace13reserved_sizeEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK12VirtualSpace13reserved_sizeEv (1 samples, 0.12%)</title><rect x="616.5" y="337" width="1.5" height="15.0" fill="rgb(211,2,45)" rx="2" ry="2" />
+<text text-anchor="" x="619.53" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12outputStream8print_crEPKcz (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12outputStream8print_crEPKcz (1 samples, 0.12%)</title><rect x="984.5" y="273" width="1.4" height="15.0" fill="rgb(225,4,9)" rx="2" ry="2" />
+<text text-anchor="" x="987.47" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12outputStream5printEPKcz (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12outputStream5printEPKcz (1 samples, 0.12%)</title><rect x="965.8" y="273" width="1.4" height="15.0" fill="rgb(220,157,54)" rx="2" ry="2" />
+<text text-anchor="" x="968.79" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc53d648: org/apache/tomcat/util/buf/ByteChunk.flushBuffer()V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc53d648: org/apache/tomcat/util/buf/ByteChunk.flushBuffer()V (1 samples, 0.12%)</title><rect x="54.6" y="401" width="1.4" height="15.0" fill="rgb(230,162,4)" rx="2" ry="2" />
+<text text-anchor="" x="57.56" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN13RelocIterator19advance_over_prefixEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN13RelocIterator19advance_over_prefixEv (1 samples, 0.12%)</title><rect x="225.6" y="385" width="1.4" height="15.0" fill="rgb(252,0,33)" rx="2" ry="2" />
+<text text-anchor="" x="228.59" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN13CollectedHeap19print_heap_after_gcEv (8 samples, 0.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN13CollectedHeap19print_heap_after_gcEv (8 samples, 0.97%)</title><rect x="955.7" y="321" width="11.5" height="15.0" fill="rgb(212,67,6)" rx="2" ry="2" />
+<text text-anchor="" x="958.72" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN20ParallelScavengeHeap10trace_heapEN6GCWhen4TypeEP8GCTracer (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN20ParallelScavengeHeap10trace_heapEN6GCWhen4TypeEP8GCTracer (1 samples, 0.12%)</title><rect x="993.1" y="321" width="1.4" height="15.0" fill="rgb(216,21,17)" rx="2" ry="2" />
+<text text-anchor="" x="996.09" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN29VM_ParallelGCFailedAllocation4doitEv (259 samples, 31.55%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN29VM_ParallelGCFailedAllocation4doitEv (259 samples, 31.55%)</title><rect x="674.0" y="385" width="372.3" height="15.0" fill="rgb(235,86,7)" rx="2" ry="2" />
+<text text-anchor="" x="677.02" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN29VM_ParallelGCFailedAllocation4doitEv</text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK24GCHeapSummaryEventSender5visitEPK13GCHeapSummary (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK24GCHeapSummaryEventSender5visitEPK13GCHeapSummary (1 samples, 0.12%)</title><rect x="993.1" y="257" width="1.4" height="15.0" fill="rgb(242,38,52)" rx="2" ry="2" />
+<text text-anchor="" x="996.09" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK20ParallelScavengeHeap8print_onEP12outputStream (5 samples, 0.61%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK20ParallelScavengeHeap8print_onEP12outputStream (5 samples, 0.61%)</title><rect x="978.7" y="305" width="7.2" height="15.0" fill="rgb(248,178,28)" rx="2" ry="2" />
+<text text-anchor="" x="981.72" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('pthread_cond_timedwait@@GLIBC_2.3.2 (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>pthread_cond_timedwait@@GLIBC_2.3.2 (3 samples, 0.37%)</title><rect x="669.7" y="369" width="4.3" height="15.0" fill="rgb(230,71,33)" rx="2" ry="2" />
+<text text-anchor="" x="672.71" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN10Relocation17pd_set_data_valueEPhlb (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN10Relocation17pd_set_data_valueEPhlb (1 samples, 0.12%)</title><rect x="1040.5" y="305" width="1.5" height="15.0" fill="rgb(227,15,38)" rx="2" ry="2" />
+<text text-anchor="" x="1043.52" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN16PSIsAliveClosure11do_object_bEP7oopDesc (5 samples, 0.61%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN16PSIsAliveClosure11do_object_bEP7oopDesc (5 samples, 0.61%)</title><rect x="842.2" y="305" width="7.2" height="15.0" fill="rgb(245,141,17)" rx="2" ry="2" />
+<text text-anchor="" x="845.18" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor4waitEblb (11 samples, 1.34%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor4waitEblb (11 samples, 1.34%)</title><rect x="103.4" y="417" width="15.8" height="15.0" fill="rgb(206,106,12)" rx="2" ry="2" />
+<text text-anchor="" x="106.42" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc408330: org/apache/catalina/core/StandardHostValve.invoke(Lorg/apache/catalina/connector/Request,Lorg/apache/catalina/connector/Response,)V (28 samples, 3.41%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc408330: org/apache/catalina/core/StandardHostValve.invoke(Lorg/apache/catalina/connector/Request,Lorg/apache/catalina/connector/Response,)V (28 samples, 3.41%)</title><rect x="14.3" y="417" width="40.3" height="15.0" fill="rgb(212,70,22)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN10Relocation18pd_address_in_codeEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN10Relocation18pd_address_in_codeEv (1 samples, 0.12%)</title><rect x="231.3" y="369" width="1.5" height="15.0" fill="rgb(225,186,30)" rx="2" ry="2" />
+<text text-anchor="" x="234.34" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8ded38: java/net/SocketOutputStream.socketWrite0(Ljava/io/FileDescriptor,[BII)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8ded38: java/net/SocketOutputStream.socketWrite0(Ljava/io/FileDescriptor,[BII)V (1 samples, 0.12%)</title><rect x="54.6" y="369" width="1.4" height="15.0" fill="rgb(233,210,9)" rx="2" ry="2" />
+<text text-anchor="" x="57.56" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_IO_vfprintf (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_vfprintf (1 samples, 0.12%)</title><rect x="967.2" y="273" width="1.5" height="15.0" fill="rgb(249,143,20)" rx="2" ry="2" />
+<text text-anchor="" x="970.22" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN13CollectedHeap20print_heap_before_gcEv (14 samples, 1.71%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN13CollectedHeap20print_heap_before_gcEv (14 samples, 1.71%)</title><rect x="967.2" y="321" width="20.1" height="15.0" fill="rgb(228,181,1)" rx="2" ry="2" />
+<text text-anchor="" x="970.22" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN13instanceKlass8mask_forE12methodHandleiP17InterpreterOopMap (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN13instanceKlass8mask_forE12methodHandleiP17InterpreterOopMap (1 samples, 0.12%)</title><rect x="191.1" y="369" width="1.4" height="15.0" fill="rgb(210,88,11)" rx="2" ry="2" />
+<text text-anchor="" x="194.10" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK12MutableSpace8print_onEP12outputStream (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK12MutableSpace8print_onEP12outputStream (1 samples, 0.12%)</title><rect x="977.3" y="305" width="1.4" height="15.0" fill="rgb(211,124,6)" rx="2" ry="2" />
+<text text-anchor="" x="980.28" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK13WatcherThread5sleepEv (4 samples, 0.49%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK13WatcherThread5sleepEv (4 samples, 0.49%)</title><rect x="573.4" y="433" width="5.8" height="15.0" fill="rgb(206,47,24)" rx="2" ry="2" />
+<text text-anchor="" x="576.41" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8a4248: org/apache/coyote/http11/Http11Processor.process(Ljava/net/Socket,)V (29 samples, 3.53%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8a4248: org/apache/coyote/http11/Http11Processor.process(Ljava/net/Socket,)V (29 samples, 3.53%)</title><rect x="14.3" y="449" width="41.7" height="15.0" fill="rgb(231,26,21)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="459.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('clone (662 samples, 80.63%)')" onmouseout="c()" onclick="zoom(this)">
+<title>clone (662 samples, 80.63%)</title><rect x="99.1" y="497" width="951.5" height="15.0" fill="rgb(241,209,34)" rx="2" ry="2" />
+<text text-anchor="" x="102.11" y="507.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >clone</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN17InterpreterOopMap11iterate_oopEP13OffsetClosure (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN17InterpreterOopMap11iterate_oopEP13OffsetClosure (3 samples, 0.37%)</title><rect x="195.4" y="385" width="4.3" height="15.0" fill="rgb(254,179,26)" rx="2" ry="2" />
+<text text-anchor="" x="198.41" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor4waitEblb (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor4waitEblb (3 samples, 0.37%)</title><rect x="669.7" y="417" width="4.3" height="15.0" fill="rgb(230,4,10)" rx="2" ry="2" />
+<text text-anchor="" x="672.71" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor5IWaitEP6Threadl (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor5IWaitEP6Threadl (3 samples, 0.37%)</title><rect x="669.7" y="401" width="4.3" height="15.0" fill="rgb(239,220,12)" rx="2" ry="2" />
+<text text-anchor="" x="672.71" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN10PSScavenge16invoke_no_policyEv (255 samples, 31.06%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN10PSScavenge16invoke_no_policyEv (255 samples, 31.06%)</title><rect x="678.3" y="337" width="366.5" height="15.0" fill="rgb(244,62,45)" rx="2" ry="2" />
+<text text-anchor="" x="681.33" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN10PSScavenge16invoke_no_policyEv</text>
+</g>
+<g class="func_g" onmouseover="s('_init (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_init (1 samples, 0.12%)</title><rect x="104.9" y="369" width="1.4" height="15.0" fill="rgb(210,61,35)" rx="2" ry="2" />
+<text text-anchor="" x="107.86" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN20SafepointSynchronize5beginEv (47 samples, 5.72%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN20SafepointSynchronize5beginEv (47 samples, 5.72%)</title><rect x="602.2" y="417" width="67.5" height="15.0" fill="rgb(238,120,34)" rx="2" ry="2" />
+<text text-anchor="" x="605.16" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN20Sa..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN8Universe20print_heap_before_gcEP12outputStreamb (6 samples, 0.73%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN8Universe20print_heap_before_gcEP12outputStreamb (6 samples, 0.73%)</title><rect x="968.7" y="305" width="8.6" height="15.0" fill="rgb(209,177,29)" rx="2" ry="2" />
+<text text-anchor="" x="971.66" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN26PSGCAdaptivePolicyCounters27update_counters_from_policyEv (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN26PSGCAdaptivePolicyCounters27update_counters_from_policyEv (2 samples, 0.24%)</title><rect x="1014.7" y="321" width="2.8" height="15.0" fill="rgb(224,31,51)" rx="2" ry="2" />
+<text text-anchor="" x="1017.65" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK8CodeHeap18largest_free_blockEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK8CodeHeap18largest_free_blockEv (1 samples, 0.12%)</title><rect x="616.5" y="353" width="1.5" height="15.0" fill="rgb(234,54,54)" rx="2" ry="2" />
+<text text-anchor="" x="619.53" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc555b10: java/net/PlainSocketImpl.socketClose0(Z)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc555b10: java/net/PlainSocketImpl.socketClose0(Z)V (1 samples, 0.12%)</title><rect x="56.0" y="449" width="1.4" height="15.0" fill="rgb(250,204,3)" rx="2" ry="2" />
+<text text-anchor="" x="58.99" y="459.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN9CodeCache9find_blobEPv (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN9CodeCache9find_blobEPv (2 samples, 0.24%)</title><rect x="234.2" y="385" width="2.9" height="15.0" fill="rgb(213,128,26)" rx="2" ry="2" />
+<text text-anchor="" x="237.21" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc6b7680: javax/servlet/http/HttpServlet.service(Ljavax/servlet/ServletRequest,Ljavax/servlet/ServletResponse,)V (28 samples, 3.41%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc6b7680: javax/servlet/http/HttpServlet.service(Ljavax/servlet/ServletRequest,Ljavax/servlet/ServletResponse,)V (28 samples, 3.41%)</title><rect x="14.3" y="305" width="40.3" height="15.0" fill="rgb(216,221,31)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('jio_snprintf (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>jio_snprintf (1 samples, 0.12%)</title><rect x="1043.4" y="321" width="1.4" height="15.0" fill="rgb(223,74,30)" rx="2" ry="2" />
+<text text-anchor="" x="1046.40" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os15elapsed_counterEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os15elapsed_counterEv (1 samples, 0.12%)</title><rect x="572.0" y="385" width="1.4" height="15.0" fill="rgb(236,117,45)" rx="2" ry="2" />
+<text text-anchor="" x="574.97" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN10Dictionary7oops_doEP10OopClosure (37 samples, 4.51%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN10Dictionary7oops_doEP10OopClosure (37 samples, 4.51%)</title><rect x="240.0" y="401" width="53.1" height="15.0" fill="rgb(237,52,46)" rx="2" ry="2" />
+<text text-anchor="" x="242.96" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN10..</text>
+</g>
+<g class="func_g" onmouseover="s('__strchr_sse2 (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__strchr_sse2 (1 samples, 0.12%)</title><rect x="964.3" y="241" width="1.5" height="15.0" fill="rgb(221,106,31)" rx="2" ry="2" />
+<text text-anchor="" x="967.35" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN9ChunkPool8allocateEmN17AllocFailStrategy13AllocFailEnumE (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN9ChunkPool8allocateEmN17AllocFailStrategy13AllocFailEnumE (1 samples, 0.12%)</title><rect x="1026.2" y="289" width="1.4" height="15.0" fill="rgb(214,67,20)" rx="2" ry="2" />
+<text text-anchor="" x="1029.15" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12VM_Operation8evaluateEv (259 samples, 31.55%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12VM_Operation8evaluateEv (259 samples, 31.55%)</title><rect x="674.0" y="401" width="372.3" height="15.0" fill="rgb(221,143,27)" rx="2" ry="2" />
+<text text-anchor="" x="677.02" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN12VM_Operation8evaluateEv</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12outputStream5printEPKcz (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12outputStream5printEPKcz (1 samples, 0.12%)</title><rect x="964.3" y="257" width="1.5" height="15.0" fill="rgb(235,129,13)" rx="2" ry="2" />
+<text text-anchor="" x="967.35" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14JNIHandleBlock7oops_doEP10OopClosure (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14JNIHandleBlock7oops_doEP10OopClosure (2 samples, 0.24%)</title><rect x="129.3" y="401" width="2.9" height="15.0" fill="rgb(221,36,15)" rx="2" ry="2" />
+<text text-anchor="" x="132.29" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('pthread_getspecific (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>pthread_getspecific (1 samples, 0.12%)</title><rect x="208.3" y="385" width="1.5" height="15.0" fill="rgb(239,20,2)" rx="2" ry="2" />
+<text text-anchor="" x="211.34" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN15ThreadRootsTask5do_itEP13GCTaskManagerj (81 samples, 9.87%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN15ThreadRootsTask5do_itEP13GCTaskManagerj (81 samples, 9.87%)</title><rect x="123.5" y="433" width="116.5" height="15.0" fill="rgb(229,132,10)" rx="2" ry="2" />
+<text text-anchor="" x="126.54" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN15ThreadRoo..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os23serialize_thread_statesEv (12 samples, 1.46%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os23serialize_thread_statesEv (12 samples, 1.46%)</title><rect x="649.6" y="401" width="17.2" height="15.0" fill="rgb(228,84,31)" rx="2" ry="2" />
+<text text-anchor="" x="652.59" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK8GCTracer26send_gc_heap_summary_eventEN6GCWhen4TypeERK13GCHeapSummary (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK8GCTracer26send_gc_heap_summary_eventEN6GCWhen4TypeERK13GCHeapSummary (1 samples, 0.12%)</title><rect x="993.1" y="289" width="1.4" height="15.0" fill="rgb(215,45,47)" rx="2" ry="2" />
+<text text-anchor="" x="996.09" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN5frame16oops_do_internalEP10OopClosureP15CodeBlobClosureP11RegisterMapb (30 samples, 3.65%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN5frame16oops_do_internalEP10OopClosureP15CodeBlobClosureP11RegisterMapb (30 samples, 3.65%)</title><rect x="137.9" y="401" width="43.1" height="15.0" fill="rgb(251,142,18)" rx="2" ry="2" />
+<text text-anchor="" x="140.92" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN5..</text>
+</g>
+<g class="func_g" onmouseover="s('__vsnprintf_chk (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__vsnprintf_chk (3 samples, 0.37%)</title><rect x="955.7" y="273" width="4.3" height="15.0" fill="rgb(240,30,12)" rx="2" ry="2" />
+<text text-anchor="" x="958.72" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__vsnprintf_chk (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__vsnprintf_chk (2 samples, 0.24%)</title><rect x="1047.7" y="401" width="2.9" height="15.0" fill="rgb(235,43,46)" rx="2" ry="2" />
+<text text-anchor="" x="1050.71" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('mprotect (7 samples, 0.85%)')" onmouseout="c()" onclick="zoom(this)">
+<title>mprotect (7 samples, 0.85%)</title><rect x="592.1" y="385" width="10.1" height="15.0" fill="rgb(221,84,24)" rx="2" ry="2" />
+<text text-anchor="" x="595.10" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN11GCTraceTimeD2Ev (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN11GCTraceTimeD2Ev (2 samples, 0.24%)</title><rect x="681.2" y="321" width="2.9" height="15.0" fill="rgb(211,188,2)" rx="2" ry="2" />
+<text text-anchor="" x="684.21" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdce64a00: org/apache/jasper/runtime/HttpJspBase.service(Ljavax/servlet/http/HttpServletRequest,Ljavax/servlet/http/HttpServletResponse,)V (28 samples, 3.41%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdce64a00: org/apache/jasper/runtime/HttpJspBase.service(Ljavax/servlet/http/HttpServletRequest,Ljavax/servlet/http/HttpServletResponse,)V (28 samples, 3.41%)</title><rect x="14.3" y="289" width="40.3" height="15.0" fill="rgb(219,56,18)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14PSRootsClosureILb0EE6do_oopEPP7oopDesc (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14PSRootsClosureILb0EE6do_oopEPP7oopDesc (3 samples, 0.37%)</title><rect x="125.0" y="385" width="4.3" height="15.0" fill="rgb(222,63,12)" rx="2" ry="2" />
+<text text-anchor="" x="127.98" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN9OopMapSet7oops_doEPK5framePK11RegisterMapP10OopClosure (29 samples, 3.53%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN9OopMapSet7oops_doEPK5framePK11RegisterMapP10OopClosure (29 samples, 3.53%)</title><rect x="137.9" y="385" width="41.7" height="15.0" fill="rgb(235,112,21)" rx="2" ry="2" />
+<text text-anchor="" x="140.92" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN..</text>
+</g>
+<g class="func_g" onmouseover="s('0xdc896ab0: sun/nio/cs/ISO_8859_1$Encoder.encodeArrayLoop(Ljava/nio/CharBuffer,Ljava/nio/ByteBuffer,)Ljava/nio/charset/CoderResult, (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc896ab0: sun/nio/cs/ISO_8859_1$Encoder.encodeArrayLoop(Ljava/nio/CharBuffer,Ljava/nio/ByteBuffer,)Ljava/nio/charset/CoderResult, (1 samples, 0.12%)</title><rect x="53.1" y="49" width="1.5" height="15.0" fill="rgb(254,208,52)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="59.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_IO_default_xsputn (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_default_xsputn (1 samples, 0.12%)</title><rect x="961.5" y="193" width="1.4" height="15.0" fill="rgb(235,111,41)" rx="2" ry="2" />
+<text text-anchor="" x="964.47" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc4183e0: org/apache/jasper/runtime/JspFactoryImpl.releasePageContext(Ljavax/servlet/jsp/PageContext,)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc4183e0: org/apache/jasper/runtime/JspFactoryImpl.releasePageContext(Ljavax/servlet/jsp/PageContext,)V (1 samples, 0.12%)</title><rect x="53.1" y="257" width="1.5" height="15.0" fill="rgb(241,39,47)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN5Chunk9next_chopEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN5Chunk9next_chopEv (1 samples, 0.12%)</title><rect x="1017.5" y="321" width="1.5" height="15.0" fill="rgb(231,139,33)" rx="2" ry="2" />
+<text text-anchor="" x="1020.53" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__vsnprintf_chk (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__vsnprintf_chk (1 samples, 0.12%)</title><rect x="977.3" y="273" width="1.4" height="15.0" fill="rgb(252,157,32)" rx="2" ry="2" />
+<text text-anchor="" x="980.28" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14PSRootsClosureILb0EE6do_oopEPP7oopDesc (29 samples, 3.53%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14PSRootsClosureILb0EE6do_oopEPP7oopDesc (29 samples, 3.53%)</title><rect x="251.5" y="385" width="41.6" height="15.0" fill="rgb(233,71,15)" rx="2" ry="2" />
+<text text-anchor="" x="254.46" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12outputStream5printEPKcz (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12outputStream5printEPKcz (1 samples, 0.12%)</title><rect x="977.3" y="289" width="1.4" height="15.0" fill="rgb(241,183,30)" rx="2" ry="2" />
+<text text-anchor="" x="980.28" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os28make_polling_page_unreadableEv (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os28make_polling_page_unreadableEv (2 samples, 0.24%)</title><rect x="666.8" y="401" width="2.9" height="15.0" fill="rgb(223,70,46)" rx="2" ry="2" />
+<text text-anchor="" x="669.83" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_IO_vfprintf (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_vfprintf (1 samples, 0.12%)</title><rect x="981.6" y="241" width="1.4" height="15.0" fill="rgb(216,131,53)" rx="2" ry="2" />
+<text text-anchor="" x="984.60" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os14protect_memoryEPcmNS_8ProtTypeEb (12 samples, 1.46%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os14protect_memoryEPcmNS_8ProtTypeEb (12 samples, 1.46%)</title><rect x="649.6" y="385" width="17.2" height="15.0" fill="rgb(234,101,16)" rx="2" ry="2" />
+<text text-anchor="" x="652.59" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN15PerfLongVariant6sampleEv (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN15PerfLongVariant6sampleEv (3 samples, 0.37%)</title><rect x="569.1" y="401" width="4.3" height="15.0" fill="rgb(213,206,28)" rx="2" ry="2" />
+<text text-anchor="" x="572.10" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor4waitEblb (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor4waitEblb (2 samples, 0.24%)</title><rect x="988.8" y="305" width="2.9" height="15.0" fill="rgb(240,59,20)" rx="2" ry="2" />
+<text text-anchor="" x="991.78" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__vsnprintf_chk (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__vsnprintf_chk (2 samples, 0.24%)</title><rect x="960.0" y="241" width="2.9" height="15.0" fill="rgb(236,167,31)" rx="2" ry="2" />
+<text text-anchor="" x="963.04" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc7940a8: java/net/Socket.close()V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc7940a8: java/net/Socket.close()V (1 samples, 0.12%)</title><rect x="56.0" y="465" width="1.4" height="15.0" fill="rgb(242,40,26)" rx="2" ry="2" />
+<text text-anchor="" x="58.99" y="475.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os15uncommit_memoryEPcm (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os15uncommit_memoryEPcm (1 samples, 0.12%)</title><rect x="679.8" y="273" width="1.4" height="15.0" fill="rgb(225,229,22)" rx="2" ry="2" />
+<text text-anchor="" x="682.77" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('pthread_cond_wait@@GLIBC_2.3.2 (8 samples, 0.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>pthread_cond_wait@@GLIBC_2.3.2 (8 samples, 0.97%)</title><rect x="106.3" y="369" width="11.5" height="15.0" fill="rgb(243,53,37)" rx="2" ry="2" />
+<text text-anchor="" x="109.30" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN20ParallelScavengeHeap15update_countersEv (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN20ParallelScavengeHeap15update_countersEv (2 samples, 0.24%)</title><rect x="994.5" y="321" width="2.9" height="15.0" fill="rgb(246,111,3)" rx="2" ry="2" />
+<text text-anchor="" x="997.53" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc900338: org/apache/catalina/connector/OutputBuffer.write([CII)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc900338: org/apache/catalina/connector/OutputBuffer.write([CII)V (1 samples, 0.12%)</title><rect x="53.1" y="177" width="1.5" height="15.0" fill="rgb(254,14,8)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc5efb78: org/apache/catalina/core/StandardContextValve.invoke(Lorg/apache/catalina/connector/Request,Lorg/apache/catalina/connector/Response,)V (28 samples, 3.41%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc5efb78: org/apache/catalina/core/StandardContextValve.invoke(Lorg/apache/catalina/connector/Request,Lorg/apache/catalina/connector/Response,)V (28 samples, 3.41%)</title><rect x="14.3" y="401" width="40.3" height="15.0" fill="rgb(218,39,2)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('__memcpy_sse2_unaligned (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__memcpy_sse2_unaligned (2 samples, 0.24%)</title><rect x="589.2" y="385" width="2.9" height="15.0" fill="rgb(232,33,45)" rx="2" ry="2" />
+<text text-anchor="" x="592.22" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0x49267d609 (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0x49267d609 (1 samples, 0.12%)</title><rect x="11.4" y="497" width="1.5" height="15.0" fill="rgb(223,16,51)" rx="2" ry="2" />
+<text text-anchor="" x="14.44" y="507.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os26make_polling_page_readableEv (7 samples, 0.85%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os26make_polling_page_readableEv (7 samples, 0.85%)</title><rect x="592.1" y="401" width="10.1" height="15.0" fill="rgb(219,64,8)" rx="2" ry="2" />
+<text text-anchor="" x="595.10" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK24GCHeapSummaryEventSender5visitEPK13PSHeapSummary (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK24GCHeapSummaryEventSender5visitEPK13PSHeapSummary (1 samples, 0.12%)</title><rect x="993.1" y="273" width="1.4" height="15.0" fill="rgb(241,192,22)" rx="2" ry="2" />
+<text text-anchor="" x="996.09" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os26make_polling_page_readableEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os26make_polling_page_readableEv (1 samples, 0.12%)</title><rect x="11.4" y="481" width="1.5" height="15.0" fill="rgb(243,159,41)" rx="2" ry="2" />
+<text text-anchor="" x="14.44" y="491.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN20ParallelScavengeHeap11size_policyEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN20ParallelScavengeHeap11size_policyEv (1 samples, 0.12%)</title><rect x="1044.8" y="337" width="1.5" height="15.0" fill="rgb(231,108,47)" rx="2" ry="2" />
+<text text-anchor="" x="1047.84" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os13PlatformEvent4parkEl (4 samples, 0.49%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os13PlatformEvent4parkEl (4 samples, 0.49%)</title><rect x="573.4" y="385" width="5.8" height="15.0" fill="rgb(208,202,47)" rx="2" ry="2" />
+<text text-anchor="" x="576.41" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__vsnprintf_chk (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__vsnprintf_chk (1 samples, 0.12%)</title><rect x="1043.4" y="305" width="1.4" height="15.0" fill="rgb(217,137,20)" rx="2" ry="2" />
+<text text-anchor="" x="1046.40" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_IO_no_init (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_no_init (1 samples, 0.12%)</title><rect x="970.1" y="257" width="1.4" height="15.0" fill="rgb(222,127,44)" rx="2" ry="2" />
+<text text-anchor="" x="973.10" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor28lock_without_safepoint_checkEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor28lock_without_safepoint_checkEv (1 samples, 0.12%)</title><rect x="987.3" y="305" width="1.5" height="15.0" fill="rgb(253,144,52)" rx="2" ry="2" />
+<text text-anchor="" x="990.34" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__strncpy_sse2_unaligned (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__strncpy_sse2_unaligned (1 samples, 0.12%)</title><rect x="978.7" y="241" width="1.5" height="15.0" fill="rgb(224,38,3)" rx="2" ry="2" />
+<text text-anchor="" x="981.72" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc2e8fa8: org/apache/catalina/core/ContainerBase.backgroundProcess()V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc2e8fa8: org/apache/catalina/core/ContainerBase.backgroundProcess()V (1 samples, 0.12%)</title><rect x="12.9" y="433" width="1.4" height="15.0" fill="rgb(208,200,33)" rx="2" ry="2" />
+<text text-anchor="" x="15.87" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdbca2310: java/lang/Integer.getChars(II[C)V (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdbca2310: java/lang/Integer.getChars(II[C)V (2 samples, 0.24%)</title><rect x="50.2" y="257" width="2.9" height="15.0" fill="rgb(237,162,7)" rx="2" ry="2" />
+<text text-anchor="" x="53.24" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN19TemplateInterpreter17notice_safepointsEv (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN19TemplateInterpreter17notice_safepointsEv (2 samples, 0.24%)</title><rect x="613.7" y="401" width="2.8" height="15.0" fill="rgb(246,148,12)" rx="2" ry="2" />
+<text text-anchor="" x="616.65" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN8PSOldGen15update_countersEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN8PSOldGen15update_countersEv (1 samples, 0.12%)</title><rect x="996.0" y="305" width="1.4" height="15.0" fill="rgb(206,78,9)" rx="2" ry="2" />
+<text text-anchor="" x="998.97" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os13PlatformEvent4parkEv (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os13PlatformEvent4parkEv (2 samples, 0.24%)</title><rect x="988.8" y="273" width="2.9" height="15.0" fill="rgb(252,221,17)" rx="2" ry="2" />
+<text text-anchor="" x="991.78" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os13PlatformEvent4parkEv (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os13PlatformEvent4parkEv (3 samples, 0.37%)</title><rect x="490.0" y="385" width="4.4" height="15.0" fill="rgb(245,80,44)" rx="2" ry="2" />
+<text text-anchor="" x="493.05" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14oop_Relocation9oop_valueEv (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14oop_Relocation9oop_valueEv (2 samples, 0.24%)</title><rect x="229.9" y="385" width="2.9" height="15.0" fill="rgb(212,112,4)" rx="2" ry="2" />
+<text text-anchor="" x="232.90" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('pthread_cond_wait@@GLIBC_2.3.2 (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>pthread_cond_wait@@GLIBC_2.3.2 (2 samples, 0.24%)</title><rect x="988.8" y="257" width="2.9" height="15.0" fill="rgb(219,227,46)" rx="2" ry="2" />
+<text text-anchor="" x="991.78" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN11OopMapCache6lookupE12methodHandleiP17InterpreterOopMap (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN11OopMapCache6lookupE12methodHandleiP17InterpreterOopMap (1 samples, 0.12%)</title><rect x="189.7" y="369" width="1.4" height="15.0" fill="rgb(228,183,44)" rx="2" ry="2" />
+<text text-anchor="" x="192.66" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN15GCMemoryManager8gc_beginEbbb (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN15GCMemoryManager8gc_beginEbbb (3 samples, 0.37%)</title><rect x="1010.3" y="305" width="4.4" height="15.0" fill="rgb(250,135,52)" rx="2" ry="2" />
+<text text-anchor="" x="1013.34" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN5frame19oops_interpreted_doEP10OopClosurePK11RegisterMapb (20 samples, 2.44%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN5frame19oops_interpreted_doEP10OopClosurePK11RegisterMapb (20 samples, 2.44%)</title><rect x="181.0" y="401" width="28.8" height="15.0" fill="rgb(212,81,24)" rx="2" ry="2" />
+<text text-anchor="" x="184.04" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_Z..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os14protect_memoryEPcmNS_8ProtTypeEb (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os14protect_memoryEPcmNS_8ProtTypeEb (2 samples, 0.24%)</title><rect x="96.2" y="481" width="2.9" height="15.0" fill="rgb(221,7,35)" rx="2" ry="2" />
+<text text-anchor="" x="99.24" y="491.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor5IWaitEP6Threadl (4 samples, 0.49%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor5IWaitEP6Threadl (4 samples, 0.49%)</title><rect x="573.4" y="401" width="5.8" height="15.0" fill="rgb(234,75,5)" rx="2" ry="2" />
+<text text-anchor="" x="576.41" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN9StealTask5do_itEP13GCTaskManagerj (11 samples, 1.34%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN9StealTask5do_itEP13GCTaskManagerj (11 samples, 1.34%)</title><rect x="553.3" y="433" width="15.8" height="15.0" fill="rgb(240,197,37)" rx="2" ry="2" />
+<text text-anchor="" x="556.29" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK5frame20is_interpreted_frameEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK5frame20is_interpreted_frameEv (1 samples, 0.12%)</title><rect x="179.6" y="385" width="1.4" height="15.0" fill="rgb(205,213,13)" rx="2" ry="2" />
+<text text-anchor="" x="182.60" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14PSRootsClosureILb0EE6do_oopEPP7oopDesc (45 samples, 5.48%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14PSRootsClosureILb0EE6do_oopEPP7oopDesc (45 samples, 5.48%)</title><rect x="891.0" y="305" width="64.7" height="15.0" fill="rgb(206,127,34)" rx="2" ry="2" />
+<text text-anchor="" x="894.05" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN14PS..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN13methodOopDesc8mask_forEiP17InterpreterOopMap (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN13methodOopDesc8mask_forEiP17InterpreterOopMap (3 samples, 0.37%)</title><rect x="189.7" y="385" width="4.3" height="15.0" fill="rgb(221,44,5)" rx="2" ry="2" />
+<text text-anchor="" x="192.66" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_L_unlock_722 (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_L_unlock_722 (1 samples, 0.12%)</title><rect x="577.7" y="353" width="1.5" height="15.0" fill="rgb(214,47,38)" rx="2" ry="2" />
+<text text-anchor="" x="580.72" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor5IWaitEP6Threadl (11 samples, 1.34%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor5IWaitEP6Threadl (11 samples, 1.34%)</title><rect x="103.4" y="401" width="15.8" height="15.0" fill="rgb(216,103,6)" rx="2" ry="2" />
+<text text-anchor="" x="106.42" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK20ParallelScavengeHeap8print_onEP12outputStream (4 samples, 0.49%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK20ParallelScavengeHeap8print_onEP12outputStream (4 samples, 0.49%)</title><rect x="960.0" y="289" width="5.8" height="15.0" fill="rgb(215,205,32)" rx="2" ry="2" />
+<text text-anchor="" x="963.04" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN15VM_GC_Operation15notify_gc_beginEb (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN15VM_GC_Operation15notify_gc_beginEb (1 samples, 0.12%)</title><rect x="676.9" y="369" width="1.4" height="15.0" fill="rgb(246,39,40)" rx="2" ry="2" />
+<text text-anchor="" x="679.89" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8f39e0: org/apache/catalina/connector/CoyoteWriter.write([CII)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8f39e0: org/apache/catalina/connector/CoyoteWriter.write([CII)V (1 samples, 0.12%)</title><rect x="53.1" y="193" width="1.5" height="15.0" fill="rgb(248,96,53)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN18ObjectSynchronizer7oops_doEP10OopClosure (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN18ObjectSynchronizer7oops_doEP10OopClosure (2 samples, 0.24%)</title><rect x="296.0" y="417" width="2.9" height="15.0" fill="rgb(237,121,26)" rx="2" ry="2" />
+<text text-anchor="" x="299.02" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK8GCTracer22report_gc_heap_summaryEN6GCWhen4TypeERK13GCHeapSummaryRK14PermGenSummary (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK8GCTracer22report_gc_heap_summaryEN6GCWhen4TypeERK13GCHeapSummaryRK14PermGenSummary (1 samples, 0.12%)</title><rect x="993.1" y="305" width="1.4" height="15.0" fill="rgb(206,152,10)" rx="2" ry="2" />
+<text text-anchor="" x="996.09" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os15elapsed_counterEv (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os15elapsed_counterEv (2 samples, 0.24%)</title><rect x="681.2" y="289" width="2.9" height="15.0" fill="rgb(234,11,12)" rx="2" ry="2" />
+<text text-anchor="" x="684.21" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor28lock_without_safepoint_checkEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor28lock_without_safepoint_checkEv (1 samples, 0.12%)</title><rect x="102.0" y="417" width="1.4" height="15.0" fill="rgb(247,206,30)" rx="2" ry="2" />
+<text text-anchor="" x="104.99" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN13GCTaskManager8get_taskEj (16 samples, 1.95%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN13GCTaskManager8get_taskEj (16 samples, 1.95%)</title><rect x="100.5" y="433" width="23.0" height="15.0" fill="rgb(218,37,10)" rx="2" ry="2" />
+<text text-anchor="" x="103.55" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK15objArrayOopDesc6obj_atEi (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK15objArrayOopDesc6obj_atEi (1 samples, 0.12%)</title><rect x="648.1" y="353" width="1.5" height="15.0" fill="rgb(239,170,17)" rx="2" ry="2" />
+<text text-anchor="" x="651.15" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN9EventMarkC2EPKcz (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN9EventMarkC2EPKcz (2 samples, 0.24%)</title><rect x="1047.7" y="417" width="2.9" height="15.0" fill="rgb(252,105,25)" rx="2" ry="2" />
+<text text-anchor="" x="1050.71" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN20CompressedReadStream11read_int_mbEi (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN20CompressedReadStream11read_int_mbEi (1 samples, 0.12%)</title><rect x="175.3" y="369" width="1.4" height="15.0" fill="rgb(233,54,17)" rx="2" ry="2" />
+<text text-anchor="" x="178.29" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14ThreadCriticalC2Ev (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14ThreadCriticalC2Ev (1 samples, 0.12%)</title><rect x="1026.2" y="273" width="1.4" height="15.0" fill="rgb(245,65,0)" rx="2" ry="2" />
+<text text-anchor="" x="1029.15" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK8PSOldGen8print_onEP12outputStream (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK8PSOldGen8print_onEP12outputStream (1 samples, 0.12%)</title><rect x="965.8" y="289" width="1.4" height="15.0" fill="rgb(221,29,8)" rx="2" ry="2" />
+<text text-anchor="" x="968.79" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN13GCTaskManager16execute_and_waitEP11GCTaskQueue (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN13GCTaskManager16execute_and_waitEP11GCTaskQueue (3 samples, 0.37%)</title><rect x="987.3" y="321" width="4.4" height="15.0" fill="rgb(214,123,15)" rx="2" ry="2" />
+<text text-anchor="" x="990.34" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN10PSScavenge6invokeEv (256 samples, 31.18%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN10PSScavenge6invokeEv (256 samples, 31.18%)</title><rect x="678.3" y="353" width="368.0" height="15.0" fill="rgb(206,45,32)" rx="2" ry="2" />
+<text text-anchor="" x="681.33" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN10PSScavenge6invokeEv</text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8a47e0: org/apache/coyote/http11/Http11Processor.action(Lorg/apache/coyote/ActionCode,Ljava/lang/Object,)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8a47e0: org/apache/coyote/http11/Http11Processor.action(Lorg/apache/coyote/ActionCode,Ljava/lang/Object,)V (1 samples, 0.12%)</title><rect x="54.6" y="417" width="1.4" height="15.0" fill="rgb(221,82,9)" rx="2" ry="2" />
+<text text-anchor="" x="57.56" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN16StackFrameStreamC1EP10JavaThreadb (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN16StackFrameStreamC1EP10JavaThreadb (1 samples, 0.12%)</title><rect x="132.2" y="401" width="1.4" height="15.0" fill="rgb(233,153,48)" rx="2" ry="2" />
+<text text-anchor="" x="135.17" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc39d830: org/apache/coyote/http11/Http11Protocol$Http11ConnectionHandler.process(Ljava/net/Socket,)Z (29 samples, 3.53%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc39d830: org/apache/coyote/http11/Http11Protocol$Http11ConnectionHandler.process(Ljava/net/Socket,)Z (29 samples, 3.53%)</title><rect x="14.3" y="465" width="41.7" height="15.0" fill="rgb(209,78,41)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="475.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('_IO_setb (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_IO_setb (1 samples, 0.12%)</title><rect x="1043.4" y="273" width="1.4" height="15.0" fill="rgb(213,15,18)" rx="2" ry="2" />
+<text text-anchor="" x="1046.40" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN9Assembler14locate_operandEPhNS_12WhichOperandE (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN9Assembler14locate_operandEPhNS_12WhichOperandE (1 samples, 0.12%)</title><rect x="1040.5" y="289" width="1.5" height="15.0" fill="rgb(214,219,37)" rx="2" ry="2" />
+<text text-anchor="" x="1043.52" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__vsnprintf_chk (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__vsnprintf_chk (1 samples, 0.12%)</title><rect x="981.6" y="257" width="1.4" height="15.0" fill="rgb(253,6,4)" rx="2" ry="2" />
+<text text-anchor="" x="984.60" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK13methodOopDesc8bci_fromEPh (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK13methodOopDesc8bci_fromEPh (1 samples, 0.12%)</title><rect x="206.9" y="385" width="1.4" height="15.0" fill="rgb(227,159,43)" rx="2" ry="2" />
+<text text-anchor="" x="209.91" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK8PSOldGen8print_onEP12outputStream (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK8PSOldGen8print_onEP12outputStream (1 samples, 0.12%)</title><rect x="985.9" y="305" width="1.4" height="15.0" fill="rgb(225,188,50)" rx="2" ry="2" />
+<text text-anchor="" x="988.91" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdbc34a68: java/lang/Thread.run()V (31 samples, 3.78%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdbc34a68: java/lang/Thread.run()V (31 samples, 3.78%)</title><rect x="12.9" y="497" width="44.5" height="15.0" fill="rgb(248,44,16)" rx="2" ry="2" />
+<text text-anchor="" x="15.87" y="507.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xdb..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN14PSRootsClosureILb0EE6do_oopEPP7oopDesc (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN14PSRootsClosureILb0EE6do_oopEPP7oopDesc (2 samples, 0.24%)</title><rect x="227.0" y="385" width="2.9" height="15.0" fill="rgb(237,86,2)" rx="2" ry="2" />
+<text text-anchor="" x="230.03" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN21LoaderConstraintTable7oops_doEP10OopClosure (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN21LoaderConstraintTable7oops_doEP10OopClosure (2 samples, 0.24%)</title><rect x="293.1" y="401" width="2.9" height="15.0" fill="rgb(239,182,33)" rx="2" ry="2" />
+<text text-anchor="" x="296.14" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN19OldToYoungRootsTask5do_itEP13GCTaskManagerj (133 samples, 16.20%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN19OldToYoungRootsTask5do_itEP13GCTaskManagerj (133 samples, 16.20%)</title><rect x="298.9" y="433" width="191.1" height="15.0" fill="rgb(241,14,45)" rx="2" ry="2" />
+<text text-anchor="" x="301.89" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN19OldToYoungRootsTask..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7nmethod7oops_doEP10OopClosurebb (16 samples, 1.95%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7nmethod7oops_doEP10OopClosurebb (16 samples, 1.95%)</title><rect x="209.8" y="401" width="23.0" height="15.0" fill="rgb(238,203,0)" rx="2" ry="2" />
+<text text-anchor="" x="212.78" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_..</text>
+</g>
+<g class="func_g" onmouseover="s('pthread_mutex_unlock (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>pthread_mutex_unlock (1 samples, 0.12%)</title><rect x="577.7" y="369" width="1.5" height="15.0" fill="rgb(228,195,25)" rx="2" ry="2" />
+<text text-anchor="" x="580.72" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK8PSOldGen8print_onEP12outputStream (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK8PSOldGen8print_onEP12outputStream (1 samples, 0.12%)</title><rect x="964.3" y="273" width="1.5" height="15.0" fill="rgb(205,188,15)" rx="2" ry="2" />
+<text text-anchor="" x="967.35" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12outputStream8print_crEPKcz (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12outputStream8print_crEPKcz (1 samples, 0.12%)</title><rect x="967.2" y="305" width="1.5" height="15.0" fill="rgb(232,136,11)" rx="2" ry="2" />
+<text text-anchor="" x="970.22" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc78ce00: org/apache/tomcat/util/net/JIoEndpoint$Worker.run()V (30 samples, 3.65%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc78ce00: org/apache/tomcat/util/net/JIoEndpoint$Worker.run()V (30 samples, 3.65%)</title><rect x="14.3" y="481" width="43.1" height="15.0" fill="rgb(210,109,10)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="491.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xdc..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN13RelocIterator10set_limitsEPhS0_ (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN13RelocIterator10set_limitsEPhS0_ (2 samples, 0.24%)</title><rect x="222.7" y="385" width="2.9" height="15.0" fill="rgb(223,58,51)" rx="2" ry="2" />
+<text text-anchor="" x="225.72" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN13WatcherThread3runEv (7 samples, 0.85%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN13WatcherThread3runEv (7 samples, 0.85%)</title><rect x="569.1" y="449" width="10.1" height="15.0" fill="rgb(217,146,24)" rx="2" ry="2" />
+<text text-anchor="" x="572.10" y="459.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdbd853d8: java/nio/charset/CharsetEncoder.encode(Ljava/nio/CharBuffer,Ljava/nio/ByteBuffer,Z)Ljava/nio/charset/CoderResult, (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdbd853d8: java/nio/charset/CharsetEncoder.encode(Ljava/nio/CharBuffer,Ljava/nio/ByteBuffer,Z)Ljava/nio/charset/CoderResult, (1 samples, 0.12%)</title><rect x="53.1" y="81" width="1.5" height="15.0" fill="rgb(210,7,34)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="91.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12outputStream8print_crEPKcz (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12outputStream8print_crEPKcz (3 samples, 0.37%)</title><rect x="955.7" y="289" width="4.3" height="15.0" fill="rgb(246,141,42)" rx="2" ry="2" />
+<text text-anchor="" x="958.72" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12outputStream8print_crEPKcz (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12outputStream8print_crEPKcz (1 samples, 0.12%)</title><rect x="981.6" y="273" width="1.4" height="15.0" fill="rgb(230,166,43)" rx="2" ry="2" />
+<text text-anchor="" x="984.60" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('pthread_getspecific (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>pthread_getspecific (1 samples, 0.12%)</title><rect x="102.0" y="401" width="1.4" height="15.0" fill="rgb(232,207,23)" rx="2" ry="2" />
+<text text-anchor="" x="104.99" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN20WaitForBarrierGCTask5do_itEP13GCTaskManagerj (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN20WaitForBarrierGCTask5do_itEP13GCTaskManagerj (3 samples, 0.37%)</title><rect x="490.0" y="433" width="4.4" height="15.0" fill="rgb(242,11,20)" rx="2" ry="2" />
+<text text-anchor="" x="493.05" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_Z29specialized_oop_push_contentsIjEvP16instanceRefKlassP18PSPromotionManagerP7oopDesc (4 samples, 0.49%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_Z29specialized_oop_push_contentsIjEvP16instanceRefKlassP18PSPromotionManagerP7oopDesc (4 samples, 0.49%)</title><rect x="469.9" y="401" width="5.8" height="15.0" fill="rgb(242,202,42)" rx="2" ry="2" />
+<text text-anchor="" x="472.93" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN15GlobalTLABStats7publishEv (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN15GlobalTLABStats7publishEv (2 samples, 0.24%)</title><rect x="1003.2" y="305" width="2.8" height="15.0" fill="rgb(246,200,25)" rx="2" ry="2" />
+<text text-anchor="" x="1006.15" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdbd7c650: java/io/OutputStreamWriter.write([CII)V (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdbd7c650: java/io/OutputStreamWriter.write([CII)V (1 samples, 0.12%)</title><rect x="53.1" y="129" width="1.5" height="15.0" fill="rgb(215,43,34)" rx="2" ry="2" />
+<text text-anchor="" x="56.12" y="139.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN10HandleArea7oops_doEP10OopClosure (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN10HandleArea7oops_doEP10OopClosure (3 samples, 0.37%)</title><rect x="125.0" y="401" width="4.3" height="15.0" fill="rgb(210,197,12)" rx="2" ry="2" />
+<text text-anchor="" x="127.98" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('pthread_mutex_unlock (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>pthread_mutex_unlock (1 samples, 0.12%)</title><rect x="117.8" y="369" width="1.4" height="15.0" fill="rgb(213,54,26)" rx="2" ry="2" />
+<text text-anchor="" x="120.80" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor4waitEblb (3 samples, 0.37%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor4waitEblb (3 samples, 0.37%)</title><rect x="490.0" y="417" width="4.4" height="15.0" fill="rgb(254,108,53)" rx="2" ry="2" />
+<text text-anchor="" x="493.05" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK7nmethod9is_zombieEv (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK7nmethod9is_zombieEv (1 samples, 0.12%)</title><rect x="234.2" y="369" width="1.5" height="15.0" fill="rgb(226,120,42)" rx="2" ry="2" />
+<text text-anchor="" x="237.21" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12outputStream5printEPKcz (1 samples, 0.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12outputStream5printEPKcz (1 samples, 0.12%)</title><rect x="983.0" y="273" width="1.5" height="15.0" fill="rgb(249,147,7)" rx="2" ry="2" />
+<text text-anchor="" x="986.03" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc693c38: org/apache/catalina/core/StandardWrapperValve.invoke(Lorg/apache/catalina/connector/Request,Lorg/apache/catalina/connector/Response,)V (28 samples, 3.41%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc693c38: org/apache/catalina/core/StandardWrapperValve.invoke(Lorg/apache/catalina/connector/Request,Lorg/apache/catalina/connector/Response,)V (28 samples, 3.41%)</title><rect x="14.3" y="385" width="40.3" height="15.0" fill="rgb(243,44,20)" rx="2" ry="2" />
+<text text-anchor="" x="17.31" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN7Monitor5IWaitEP6Threadl (2 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN7Monitor5IWaitEP6Threadl (2 samples, 0.24%)</title><rect x="988.8" y="289" width="2.9" height="15.0" fill="rgb(238,163,46)" rx="2" ry="2" />
+<text text-anchor="" x="991.78" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZL10java_startP6Thread (662 samples, 80.63%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZL10java_startP6Thread (662 samples, 80.63%)</title><rect x="99.1" y="465" width="951.5" height="15.0" fill="rgb(219,4,24)" rx="2" ry="2" />
+<text text-anchor="" x="102.11" y="475.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZL10java_startP6Thread</text>
+</g>
+</svg>

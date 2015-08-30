@@ -1,0 +1,1081 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="514" onload="init(evt)" viewBox="0 0 1200 514" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<defs >
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	.func_g:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	var details, svg;
+	function init(evt) { 
+		details = document.getElementById("details").firstChild; 
+		svg = document.getElementsByTagName("svg")[0];
+	}
+	function s(info) { details.nodeValue = "Function: " + info; }
+	function c() { details.nodeValue = ' '; }
+	function find_child(parent, name, attr) {
+		var children = parent.childNodes;
+		for (var i=0; i<children.length;i++) {
+			if (children[i].tagName == name)
+				return (attr != undefined) ? children[i].attributes[attr].value : children[i];
+		}
+		return;
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_"+attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_"+attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_"+attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes["width"].value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)/,"");
+		t.attributes["x"].value = parseFloat(r.attributes["x"].value) +3;
+		
+		// Smaller than this size won't fit anything
+		if (w < 2*12*0.59) {
+			t.textContent = "";
+			return;
+		}
+		
+		t.textContent = txt;
+		// Fit in full text width
+		if (/^ *$/.test(txt) || t.getSubStringLength(0, txt.length) < w)
+			return;
+		
+		for (var x=txt.length-2; x>0; x--) {
+			if (t.getSubStringLength(0, x+2) <= w) { 
+				t.textContent = txt.substring(0,x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes["x"] != undefined) {
+				orig_save(e, "x");
+				e.attributes["x"].value = (parseFloat(e.attributes["x"].value) - x - 10) * ratio + 10;
+				if(e.tagName == "text") e.attributes["x"].value = find_child(e.parentNode, "rect", "x") + 3;
+			}
+			if (e.attributes["width"] != undefined) {
+				orig_save(e, "width");
+				e.attributes["width"].value = parseFloat(e.attributes["width"].value) * ratio;
+			}
+		}
+		
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_child(c[i], x-10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes["x"] != undefined) {
+				orig_save(e, "x");
+				e.attributes["x"].value = 10;
+			}
+			if (e.attributes["width"] != undefined) {
+				orig_save(e, "width");
+				e.attributes["width"].value = parseInt(svg.width.baseVal.value) - (10*2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for(var i=0, c=e.childNodes; i<c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) { 
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr["width"].value);
+		var xmin = parseFloat(attr["x"].value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr["y"].value);
+		var ratio = (svg.width.baseVal.value - 2*10) / width;
+		
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+		
+		var unzoombtn = document.getElementById("unzoom");
+		unzoombtn.style["opacity"] = "1.0";
+		
+		var el = document.getElementsByTagName("g");
+		for(var i=0;i<el.length;i++){
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a["x"].value);
+			var ew = parseFloat(a["width"].value);
+			// Is it an ancestor
+			if (0 == 0) {
+				var upstack = parseFloat(a["y"].value) > ymin;
+			} else {
+				var upstack = parseFloat(a["y"].value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.style["opacity"] = "0.5";
+					zoom_parent(e);
+					e.onclick = function(e){unzoom(); zoom(this);};
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.style["display"] = "none";
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.style["display"] = "none";
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					e.onclick = function(e){zoom(this);};
+					update_text(e);
+				}
+			}
+		}
+	}
+	function unzoom() {
+		var unzoombtn = document.getElementById("unzoom");
+		unzoombtn.style["opacity"] = "0.0";
+		
+		var el = document.getElementsByTagName("g");
+		for(i=0;i<el.length;i++) {
+			el[i].style["display"] = "block";
+			el[i].style["opacity"] = "1";
+			zoom_reset(el[i]);
+			update_text(el[i]);
+		}
+	}	
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="514.0" fill="url(#background)"  />
+<text text-anchor="middle" x="600.00" y="24" font-size="17" font-family="Verdana" fill="rgb(0,0,0)"  >Flame Graph</text>
+<text text-anchor="" x="10.00" y="497" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="details" > </text>
+<text text-anchor="" x="10.00" y="24" font-size="12" font-family="Verdana" fill="rgb(0,0,0)" id="unzoom" onclick="unzoom()" style="opacity:0.0;cursor:pointer" >Reset Zoom</text>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23,263 samples, 51.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23,263 samples, 51.99%)</title><rect x="423.2" y="177" width="613.5" height="15.0" fill="rgb(236,65,27)" rx="2" ry="2" />
+<text text-anchor="" x="426.16" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136</text>
+</g>
+<g class="func_g" onmouseover="s('_cond_resched (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_cond_resched (4 samples, 0.01%)</title><rect x="1094.3" y="177" width="0.1" height="15.0" fill="rgb(253,78,6)" rx="2" ry="2" />
+<text text-anchor="" x="1097.29" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('futex_wait (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>futex_wait (4,918 samples, 10.99%)</title><rect x="293.4" y="241" width="129.7" height="15.0" fill="rgb(240,201,36)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >futex_wait</text>
+</g>
+<g class="func_g" onmouseover="s('Java_java_net_PlainSocketImpl_socketSetOption (48 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>Java_java_net_PlainSocketImpl_socketSetOption (48 samples, 0.11%)</title><rect x="1036.7" y="369" width="1.2" height="15.0" fill="rgb(246,91,15)" rx="2" ry="2" />
+<text text-anchor="" x="1039.67" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('SyS_recvfrom (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>SyS_recvfrom (4 samples, 0.01%)</title><rect x="1078.3" y="257" width="0.1" height="15.0" fill="rgb(249,147,30)" rx="2" ry="2" />
+<text text-anchor="" x="1081.28" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('schedule_hrtimeout_range_clock (108 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>schedule_hrtimeout_range_clock (108 samples, 0.24%)</title><rect x="1078.4" y="193" width="2.8" height="15.0" fill="rgb(230,79,15)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('schedule_user (41 samples, 0.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>schedule_user (41 samples, 0.09%)</title><rect x="1077.2" y="257" width="1.1" height="15.0" fill="rgb(229,198,41)" rx="2" ry="2" />
+<text text-anchor="" x="1080.20" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (12 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (12 samples, 0.03%)</title><rect x="1076.8" y="65" width="0.4" height="15.0" fill="rgb(212,107,35)" rx="2" ry="2" />
+<text text-anchor="" x="1079.83" y="75.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('all (44,743 samples, 100%)')" onmouseout="c()" onclick="zoom(this)">
+<title>all (44,743 samples, 100%)</title><rect x="10.0" y="465" width="1180.0" height="15.0" fill="rgb(221,142,42)" rx="2" ry="2" />
+<text text-anchor="" x="13.00" y="475.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_cond_resched (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_cond_resched (47 samples, 0.11%)</title><rect x="1036.7" y="225" width="1.2" height="15.0" fill="rgb(217,223,11)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN12vframeStreamC1EP10JavaThreadb (8 samples, 0.02%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN12vframeStreamC1EP10JavaThreadb (8 samples, 0.02%)</title><rect x="1038.1" y="353" width="0.2" height="15.0" fill="rgb(252,119,6)" rx="2" ry="2" />
+<text text-anchor="" x="1041.12" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23 samples, 0.05%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23 samples, 0.05%)</title><rect x="1094.8" y="193" width="0.6" height="15.0" fill="rgb(246,72,47)" rx="2" ry="2" />
+<text text-anchor="" x="1097.77" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('do_tcp_setsockopt.isra.29 (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>do_tcp_setsockopt.isra.29 (47 samples, 0.11%)</title><rect x="1036.7" y="257" width="1.2" height="15.0" fill="rgb(210,150,53)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_cond_resched (487 samples, 1.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_cond_resched (487 samples, 1.09%)</title><rect x="1081.4" y="193" width="12.9" height="15.0" fill="rgb(214,75,17)" rx="2" ry="2" />
+<text text-anchor="" x="1084.45" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('iput (487 samples, 1.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>iput (487 samples, 1.09%)</title><rect x="1081.4" y="241" width="12.9" height="15.0" fill="rgb(230,177,3)" rx="2" ry="2" />
+<text text-anchor="" x="1084.45" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (487 samples, 1.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (487 samples, 1.09%)</title><rect x="1081.4" y="129" width="12.9" height="15.0" fill="rgb(232,206,31)" rx="2" ry="2" />
+<text text-anchor="" x="1084.45" y="139.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (41 samples, 0.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (41 samples, 0.09%)</title><rect x="1077.2" y="241" width="1.1" height="15.0" fill="rgb(227,85,32)" rx="2" ry="2" />
+<text text-anchor="" x="1080.20" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (3,566 samples, 7.97%)</title><rect x="1096.0" y="177" width="94.0" height="15.0" fill="rgb(223,61,35)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xffffffffc..</text>
+</g>
+<g class="func_g" onmouseover="s('_cond_resched (11 samples, 0.02%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_cond_resched (11 samples, 0.02%)</title><rect x="1095.5" y="225" width="0.2" height="15.0" fill="rgb(239,160,54)" rx="2" ry="2" />
+<text text-anchor="" x="1098.45" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('SyS_setsockopt (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>SyS_setsockopt (47 samples, 0.11%)</title><rect x="1036.7" y="305" width="1.2" height="15.0" fill="rgb(214,178,19)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('closefd (502 samples, 1.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>closefd (502 samples, 1.12%)</title><rect x="1081.4" y="385" width="13.2" height="15.0" fill="rgb(251,26,45)" rx="2" ry="2" />
+<text text-anchor="" x="1084.40" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('kmem_cache_alloc_node (12 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>kmem_cache_alloc_node (12 samples, 0.03%)</title><rect x="1076.8" y="129" width="0.4" height="15.0" fill="rgb(211,116,4)" rx="2" ry="2" />
+<text text-anchor="" x="1079.83" y="139.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('schedule_hrtimeout_range_clock (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>schedule_hrtimeout_range_clock (3,566 samples, 7.97%)</title><rect x="1096.0" y="257" width="94.0" height="15.0" fill="rgb(240,117,1)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >schedule_hr..</text>
+</g>
+<g class="func_g" onmouseover="s('SyS_futex (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>SyS_futex (4,918 samples, 10.99%)</title><rect x="293.4" y="273" width="129.7" height="15.0" fill="rgb(241,172,45)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >SyS_futex</text>
+</g>
+<g class="func_g" onmouseover="s('0xdc54eb08: java/net/ServerSocket.accept()Ljava/net/Socket, (3,614 samples, 8.08%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc54eb08: java/net/ServerSocket.accept()Ljava/net/Socket, (3,614 samples, 8.08%)</title><rect x="1094.7" y="417" width="95.3" height="15.0" fill="rgb(254,33,18)" rx="2" ry="2" />
+<text text-anchor="" x="1097.69" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xdc54eb08:..</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (3,566 samples, 7.97%)</title><rect x="1096.0" y="209" width="94.0" height="15.0" fill="rgb(237,35,39)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xffffffffc..</text>
+</g>
+<g class="func_g" onmouseover="s('NET_SetSockOpt (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>NET_SetSockOpt (47 samples, 0.11%)</title><rect x="1036.7" y="353" width="1.2" height="15.0" fill="rgb(228,83,24)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc78ce00: org/apache/tomcat/util/net/JIoEndpoint$Worker.run()V (30,382 samples, 67.90%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc78ce00: org/apache/tomcat/util/net/JIoEndpoint$Worker.run()V (30,382 samples, 67.90%)</title><rect x="293.4" y="433" width="801.2" height="15.0" fill="rgb(227,102,26)" rx="2" ry="2" />
+<text text-anchor="" x="296.38" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xdc78ce00: org/apache/tomcat/util/net/JIoEndpoint$Worker.run()V</text>
+</g>
+<g class="func_g" onmouseover="s('inet6_release (7 samples, 0.02%)')" onmouseout="c()" onclick="zoom(this)">
+<title>inet6_release (7 samples, 0.02%)</title><rect x="1094.3" y="241" width="0.2" height="15.0" fill="rgb(214,180,54)" rx="2" ry="2" />
+<text text-anchor="" x="1097.29" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23 samples, 0.05%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23 samples, 0.05%)</title><rect x="1094.8" y="177" width="0.6" height="15.0" fill="rgb(238,96,12)" rx="2" ry="2" />
+<text text-anchor="" x="1097.77" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (108 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (108 samples, 0.24%)</title><rect x="1078.4" y="161" width="2.8" height="15.0" fill="rgb(228,192,36)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="171.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('task_work_run (501 samples, 1.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>task_work_run (501 samples, 1.12%)</title><rect x="1081.4" y="321" width="13.2" height="15.0" fill="rgb(234,62,13)" rx="2" ry="2" />
+<text text-anchor="" x="1084.42" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)</title><rect x="1095.8" y="193" width="0.2" height="15.0" fill="rgb(237,47,9)" rx="2" ry="2" />
+<text text-anchor="" x="1098.80" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (487 samples, 1.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (487 samples, 1.09%)</title><rect x="1081.4" y="161" width="12.9" height="15.0" fill="rgb(223,47,28)" rx="2" ry="2" />
+<text text-anchor="" x="1084.45" y="171.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc555960: java/net/PlainSocketImpl.socketAccept(Ljava/net/SocketImpl,)V (3,614 samples, 8.08%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc555960: java/net/PlainSocketImpl.socketAccept(Ljava/net/SocketImpl,)V (3,614 samples, 8.08%)</title><rect x="1094.7" y="401" width="95.3" height="15.0" fill="rgb(248,107,12)" rx="2" ry="2" />
+<text text-anchor="" x="1097.69" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xdc555960:..</text>
+</g>
+<g class="func_g" onmouseover="s('inet_recvmsg (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>inet_recvmsg (4 samples, 0.01%)</title><rect x="1078.3" y="209" width="0.1" height="15.0" fill="rgb(253,110,0)" rx="2" ry="2" />
+<text text-anchor="" x="1081.28" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('sock_common_setsockopt (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>sock_common_setsockopt (47 samples, 0.11%)</title><rect x="1036.7" y="289" width="1.2" height="15.0" fill="rgb(206,58,44)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)</title><rect x="1094.3" y="113" width="0.1" height="15.0" fill="rgb(239,132,43)" rx="2" ry="2" />
+<text text-anchor="" x="1097.29" y="123.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('JVM_DoPrivileged (21 samples, 0.05%)')" onmouseout="c()" onclick="zoom(this)">
+<title>JVM_DoPrivileged (21 samples, 0.05%)</title><rect x="1038.0" y="369" width="0.5" height="15.0" fill="rgb(251,202,48)" rx="2" ry="2" />
+<text text-anchor="" x="1040.99" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4,918 samples, 10.99%)</title><rect x="293.4" y="145" width="129.7" height="15.0" fill="rgb(244,22,20)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="155.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xffffffffc0d346..</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (487 samples, 1.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (487 samples, 1.09%)</title><rect x="1081.4" y="113" width="12.9" height="15.0" fill="rgb(216,122,50)" rx="2" ry="2" />
+<text text-anchor="" x="1084.45" y="123.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc555b10: java/net/PlainSocketImpl.socketClose0(Z)V (505 samples, 1.13%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc555b10: java/net/PlainSocketImpl.socketClose0(Z)V (505 samples, 1.13%)</title><rect x="1081.3" y="401" width="13.3" height="15.0" fill="rgb(230,4,32)" rx="2" ry="2" />
+<text text-anchor="" x="1084.32" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc7940a8: java/net/Socket.close()V (505 samples, 1.13%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc7940a8: java/net/Socket.close()V (505 samples, 1.13%)</title><rect x="1081.3" y="417" width="13.3" height="15.0" fill="rgb(234,51,42)" rx="2" ry="2" />
+<text text-anchor="" x="1084.32" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__accept_nocancel (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__accept_nocancel (47 samples, 0.11%)</title><rect x="1094.7" y="353" width="1.3" height="15.0" fill="rgb(228,14,21)" rx="2" ry="2" />
+<text text-anchor="" x="1097.71" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4,918 samples, 10.99%)</title><rect x="293.4" y="177" width="129.7" height="15.0" fill="rgb(248,228,40)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xffffffffc0d1c0..</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (13 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (13 samples, 0.03%)</title><rect x="1076.4" y="97" width="0.4" height="15.0" fill="rgb(227,192,54)" rx="2" ry="2" />
+<text text-anchor="" x="1079.44" y="107.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (108 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (108 samples, 0.24%)</title><rect x="1078.4" y="129" width="2.8" height="15.0" fill="rgb(249,98,13)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="139.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_cond_resched (13 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_cond_resched (13 samples, 0.03%)</title><rect x="1076.4" y="145" width="0.4" height="15.0" fill="rgb(216,100,12)" rx="2" ry="2" />
+<text text-anchor="" x="1079.44" y="155.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('JVM_MonitorWait (28,183 samples, 62.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>JVM_MonitorWait (28,183 samples, 62.99%)</title><rect x="293.4" y="401" width="743.3" height="15.0" fill="rgb(229,64,11)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >JVM_MonitorWait</text>
+</g>
+<g class="func_g" onmouseover="s('Java_java_net_SocketOutputStream_socketWrite0 (1,464 samples, 3.27%)')" onmouseout="c()" onclick="zoom(this)">
+<title>Java_java_net_SocketOutputStream_socketWrite0 (1,464 samples, 3.27%)</title><rect x="1038.5" y="305" width="38.7" height="15.0" fill="rgb(235,189,24)" rx="2" ry="2" />
+<text text-anchor="" x="1041.54" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Jav..</text>
+</g>
+<g class="func_g" onmouseover="s('Java_java_net_PlainSocketImpl_socketAccept (3,614 samples, 8.08%)')" onmouseout="c()" onclick="zoom(this)">
+<title>Java_java_net_PlainSocketImpl_socketAccept (3,614 samples, 8.08%)</title><rect x="1094.7" y="385" width="95.3" height="15.0" fill="rgb(210,192,27)" rx="2" ry="2" />
+<text text-anchor="" x="1097.69" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >Java_java_n..</text>
+</g>
+<g class="func_g" onmouseover="s('lock_sock_nested (23 samples, 0.05%)')" onmouseout="c()" onclick="zoom(this)">
+<title>lock_sock_nested (23 samples, 0.05%)</title><rect x="1094.8" y="273" width="0.6" height="15.0" fill="rgb(223,156,11)" rx="2" ry="2" />
+<text text-anchor="" x="1097.77" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8dcba8: java/net/SocketInputStream.read([BII)I (157 samples, 0.35%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8dcba8: java/net/SocketInputStream.read([BII)I (157 samples, 0.35%)</title><rect x="1077.2" y="369" width="4.1" height="15.0" fill="rgb(206,86,30)" rx="2" ry="2" />
+<text text-anchor="" x="1080.15" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('sk_stream_alloc_skb (14 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>sk_stream_alloc_skb (14 samples, 0.03%)</title><rect x="1076.8" y="161" width="0.4" height="15.0" fill="rgb(206,28,10)" rx="2" ry="2" />
+<text text-anchor="" x="1079.78" y="171.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('pthread_cond_wait@@GLIBC_2.3.2 (28,183 samples, 62.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>pthread_cond_wait@@GLIBC_2.3.2 (28,183 samples, 62.99%)</title><rect x="293.4" y="353" width="743.3" height="15.0" fill="rgb(244,124,43)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >pthread_cond_wait@@GLIBC_2.3.2</text>
+</g>
+<g class="func_g" onmouseover="s('SyS_futex (23,265 samples, 52.00%)')" onmouseout="c()" onclick="zoom(this)">
+<title>SyS_futex (23,265 samples, 52.00%)</title><rect x="423.1" y="321" width="613.6" height="15.0" fill="rgb(209,202,49)" rx="2" ry="2" />
+<text text-anchor="" x="426.10" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >SyS_futex</text>
+</g>
+<g class="func_g" onmouseover="s('sys_poll (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>sys_poll (3,566 samples, 7.97%)</title><rect x="1096.0" y="321" width="94.0" height="15.0" fill="rgb(241,75,23)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >sys_poll</text>
+</g>
+<g class="func_g" onmouseover="s('__dup2 (502 samples, 1.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__dup2 (502 samples, 1.12%)</title><rect x="1081.4" y="369" width="13.2" height="15.0" fill="rgb(234,32,47)" rx="2" ry="2" />
+<text text-anchor="" x="1084.40" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8dc9e8: java/net/SocketInputStream.socketRead0(Ljava/io/FileDescriptor,[BIII)I (157 samples, 0.35%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8dc9e8: java/net/SocketInputStream.socketRead0(Ljava/io/FileDescriptor,[BIII)I (157 samples, 0.35%)</title><rect x="1077.2" y="337" width="4.1" height="15.0" fill="rgb(215,225,54)" rx="2" ry="2" />
+<text text-anchor="" x="1080.15" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (4 samples, 0.01%)</title><rect x="1078.3" y="145" width="0.1" height="15.0" fill="rgb(247,176,38)" rx="2" ry="2" />
+<text text-anchor="" x="1081.28" y="155.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('lock_sock_nested (13 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>lock_sock_nested (13 samples, 0.03%)</title><rect x="1076.4" y="161" width="0.4" height="15.0" fill="rgb(254,73,44)" rx="2" ry="2" />
+<text text-anchor="" x="1079.44" y="171.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (23 samples, 0.05%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (23 samples, 0.05%)</title><rect x="1094.8" y="241" width="0.6" height="15.0" fill="rgb(252,16,25)" rx="2" ry="2" />
+<text text-anchor="" x="1097.77" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (41 samples, 0.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (41 samples, 0.09%)</title><rect x="1077.2" y="225" width="1.1" height="15.0" fill="rgb(209,71,30)" rx="2" ry="2" />
+<text text-anchor="" x="1080.20" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (41 samples, 0.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (41 samples, 0.09%)</title><rect x="1077.2" y="193" width="1.1" height="15.0" fill="rgb(219,179,51)" rx="2" ry="2" />
+<text text-anchor="" x="1080.20" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc555d90: java/net/PlainSocketImpl.socketSetOption(IZLjava/lang/Object,)V (48 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc555d90: java/net/PlainSocketImpl.socketSetOption(IZLjava/lang/Object,)V (48 samples, 0.11%)</title><rect x="1036.7" y="385" width="1.2" height="15.0" fill="rgb(251,76,51)" rx="2" ry="2" />
+<text text-anchor="" x="1039.67" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (1,433 samples, 3.20%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (1,433 samples, 3.20%)</title><rect x="1038.6" y="161" width="37.8" height="15.0" fill="rgb(218,54,26)" rx="2" ry="2" />
+<text text-anchor="" x="1041.65" y="171.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xf..</text>
+</g>
+<g class="func_g" onmouseover="s('tcp_close (7 samples, 0.02%)')" onmouseout="c()" onclick="zoom(this)">
+<title>tcp_close (7 samples, 0.02%)</title><rect x="1094.3" y="209" width="0.2" height="15.0" fill="rgb(251,142,30)" rx="2" ry="2" />
+<text text-anchor="" x="1097.29" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (47 samples, 0.11%)</title><rect x="1036.7" y="193" width="1.2" height="15.0" fill="rgb(216,53,52)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__poll_nocancel (108 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__poll_nocancel (108 samples, 0.24%)</title><rect x="1078.4" y="289" width="2.8" height="15.0" fill="rgb(224,97,13)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('tcp_recvmsg (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>tcp_recvmsg (4 samples, 0.01%)</title><rect x="1078.3" y="193" width="0.1" height="15.0" fill="rgb(233,14,35)" rx="2" ry="2" />
+<text text-anchor="" x="1081.28" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (6 samples, 0.01%)</title><rect x="1095.8" y="209" width="0.2" height="15.0" fill="rgb(252,67,52)" rx="2" ry="2" />
+<text text-anchor="" x="1098.80" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (6 samples, 0.01%)</title><rect x="1094.5" y="289" width="0.1" height="15.0" fill="rgb(225,186,27)" rx="2" ry="2" />
+<text text-anchor="" x="1097.48" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('sock_recvmsg (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>sock_recvmsg (4 samples, 0.01%)</title><rect x="1078.3" y="225" width="0.1" height="15.0" fill="rgb(223,170,51)" rx="2" ry="2" />
+<text text-anchor="" x="1081.28" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('d_alloc_pseudo (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>d_alloc_pseudo (6 samples, 0.01%)</title><rect x="1095.8" y="273" width="0.2" height="15.0" fill="rgb(240,219,7)" rx="2" ry="2" />
+<text text-anchor="" x="1098.80" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc557990: java/net/AbstractPlainSocketImpl.setOption(ILjava/lang/Object,)V (48 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc557990: java/net/AbstractPlainSocketImpl.setOption(ILjava/lang/Object,)V (48 samples, 0.11%)</title><rect x="1036.7" y="401" width="1.2" height="15.0" fill="rgb(240,145,29)" rx="2" ry="2" />
+<text text-anchor="" x="1039.67" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZNK8CodeHeap10find_startEPv (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZNK8CodeHeap10find_startEPv (6 samples, 0.01%)</title><rect x="1038.2" y="321" width="0.1" height="15.0" fill="rgb(212,136,3)" rx="2" ry="2" />
+<text text-anchor="" x="1041.17" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('SYSC_recvfrom (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>SYSC_recvfrom (4 samples, 0.01%)</title><rect x="1078.3" y="241" width="0.1" height="15.0" fill="rgb(228,83,27)" rx="2" ry="2" />
+<text text-anchor="" x="1081.28" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_cond_resched (12 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_cond_resched (12 samples, 0.03%)</title><rect x="1076.8" y="113" width="0.4" height="15.0" fill="rgb(253,211,45)" rx="2" ry="2" />
+<text text-anchor="" x="1079.83" y="123.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (12 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (12 samples, 0.03%)</title><rect x="1076.8" y="97" width="0.4" height="15.0" fill="rgb(228,94,18)" rx="2" ry="2" />
+<text text-anchor="" x="1079.83" y="107.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('SyS_sendto (27 samples, 0.06%)')" onmouseout="c()" onclick="zoom(this)">
+<title>SyS_sendto (27 samples, 0.06%)</title><rect x="1076.4" y="241" width="0.8" height="15.0" fill="rgb(215,200,54)" rx="2" ry="2" />
+<text text-anchor="" x="1079.44" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (3,566 samples, 7.97%)</title><rect x="1096.0" y="193" width="94.0" height="15.0" fill="rgb(232,105,31)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xffffffffc..</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)</title><rect x="1078.3" y="113" width="0.1" height="15.0" fill="rgb(236,173,29)" rx="2" ry="2" />
+<text text-anchor="" x="1081.28" y="123.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc53d648: org/apache/tomcat/util/buf/ByteChunk.flushBuffer()V (1,464 samples, 3.27%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc53d648: org/apache/tomcat/util/buf/ByteChunk.flushBuffer()V (1,464 samples, 3.27%)</title><rect x="1038.5" y="353" width="38.7" height="15.0" fill="rgb(224,14,35)" rx="2" ry="2" />
+<text text-anchor="" x="1041.54" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('do_futex (23,265 samples, 52.00%)')" onmouseout="c()" onclick="zoom(this)">
+<title>do_futex (23,265 samples, 52.00%)</title><rect x="423.1" y="305" width="613.6" height="15.0" fill="rgb(228,51,54)" rx="2" ry="2" />
+<text text-anchor="" x="426.10" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >do_futex</text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (4 samples, 0.01%)</title><rect x="1094.3" y="161" width="0.1" height="15.0" fill="rgb(228,61,23)" rx="2" ry="2" />
+<text text-anchor="" x="1097.29" y="171.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('schedule (23,263 samples, 51.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>schedule (23,263 samples, 51.99%)</title><rect x="423.2" y="257" width="613.5" height="15.0" fill="rgb(213,130,4)" rx="2" ry="2" />
+<text text-anchor="" x="426.16" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >schedule</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (108 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (108 samples, 0.24%)</title><rect x="1078.4" y="97" width="2.8" height="15.0" fill="rgb(221,169,24)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="107.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)</title><rect x="1078.3" y="81" width="0.1" height="15.0" fill="rgb(240,203,13)" rx="2" ry="2" />
+<text text-anchor="" x="1081.28" y="91.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (11 samples, 0.02%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (11 samples, 0.02%)</title><rect x="1095.5" y="145" width="0.2" height="15.0" fill="rgb(238,79,40)" rx="2" ry="2" />
+<text text-anchor="" x="1098.45" y="155.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23 samples, 0.05%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23 samples, 0.05%)</title><rect x="1094.8" y="225" width="0.6" height="15.0" fill="rgb(250,170,51)" rx="2" ry="2" />
+<text text-anchor="" x="1097.77" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)</title><rect x="1094.3" y="129" width="0.1" height="15.0" fill="rgb(228,133,32)" rx="2" ry="2" />
+<text text-anchor="" x="1097.29" y="139.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('lock_sock_nested (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>lock_sock_nested (47 samples, 0.11%)</title><rect x="1036.7" y="241" width="1.2" height="15.0" fill="rgb(212,223,37)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('kmem_cache_alloc (11 samples, 0.02%)')" onmouseout="c()" onclick="zoom(this)">
+<title>kmem_cache_alloc (11 samples, 0.02%)</title><rect x="1095.5" y="241" width="0.2" height="15.0" fill="rgb(205,225,27)" rx="2" ry="2" />
+<text text-anchor="" x="1098.45" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8a4248: org/apache/coyote/http11/Http11Processor.process(Ljava/net/Socket,)V (1,643 samples, 3.67%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8a4248: org/apache/coyote/http11/Http11Processor.process(Ljava/net/Socket,)V (1,643 samples, 3.67%)</title><rect x="1038.0" y="401" width="43.3" height="15.0" fill="rgb(213,0,23)" rx="2" ry="2" />
+<text text-anchor="" x="1040.99" y="411.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xdc..</text>
+</g>
+<g class="func_g" onmouseover="s('__d_alloc (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__d_alloc (6 samples, 0.01%)</title><rect x="1095.8" y="257" width="0.2" height="15.0" fill="rgb(246,185,13)" rx="2" ry="2" />
+<text text-anchor="" x="1098.80" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('NET_Accept (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>NET_Accept (47 samples, 0.11%)</title><rect x="1094.7" y="369" width="1.3" height="15.0" fill="rgb(233,94,9)" rx="2" ry="2" />
+<text text-anchor="" x="1097.71" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)</title><rect x="1078.3" y="129" width="0.1" height="15.0" fill="rgb(237,81,41)" rx="2" ry="2" />
+<text text-anchor="" x="1081.28" y="139.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc78db10: org/apache/tomcat/util/net/JIoEndpoint$Acceptor.run()V (3,616 samples, 8.08%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc78db10: org/apache/tomcat/util/net/JIoEndpoint$Acceptor.run()V (3,616 samples, 8.08%)</title><rect x="1094.6" y="433" width="95.4" height="15.0" fill="rgb(236,189,12)" rx="2" ry="2" />
+<text text-anchor="" x="1097.64" y="443.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xdc78db10:..</text>
+</g>
+<g class="func_g" onmouseover="s('do_sys_poll (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>do_sys_poll (3,566 samples, 7.97%)</title><rect x="1096.0" y="305" width="94.0" height="15.0" fill="rgb(207,4,29)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >do_sys_poll</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4,918 samples, 10.99%)</title><rect x="293.4" y="129" width="129.7" height="15.0" fill="rgb(229,192,35)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="139.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xffffffffc0d2f8..</text>
+</g>
+<g class="func_g" onmouseover="s('0xdc39d830: org/apache/coyote/http11/Http11Protocol$Http11ConnectionHandler.process(Ljava/net/Socket,)Z (1,643 samples, 3.67%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc39d830: org/apache/coyote/http11/Http11Protocol$Http11ConnectionHandler.process(Ljava/net/Socket,)Z (1,643 samples, 3.67%)</title><rect x="1038.0" y="417" width="43.3" height="15.0" fill="rgb(228,109,4)" rx="2" ry="2" />
+<text text-anchor="" x="1040.99" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xdc..</text>
+</g>
+<g class="func_g" onmouseover="s('alloc_file (13 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>alloc_file (13 samples, 0.03%)</title><rect x="1095.5" y="273" width="0.3" height="15.0" fill="rgb(210,22,0)" rx="2" ry="2" />
+<text text-anchor="" x="1098.45" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (1,433 samples, 3.20%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (1,433 samples, 3.20%)</title><rect x="1038.6" y="209" width="37.8" height="15.0" fill="rgb(232,150,5)" rx="2" ry="2" />
+<text text-anchor="" x="1041.65" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xf..</text>
+</g>
+<g class="func_g" onmouseover="s('tracesys_phase2 (27 samples, 0.06%)')" onmouseout="c()" onclick="zoom(this)">
+<title>tracesys_phase2 (27 samples, 0.06%)</title><rect x="1076.4" y="257" width="0.8" height="15.0" fill="rgb(225,202,15)" rx="2" ry="2" />
+<text text-anchor="" x="1079.44" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('futex_wait_queue_me (23,265 samples, 52.00%)')" onmouseout="c()" onclick="zoom(this)">
+<title>futex_wait_queue_me (23,265 samples, 52.00%)</title><rect x="423.1" y="273" width="613.6" height="15.0" fill="rgb(249,14,3)" rx="2" ry="2" />
+<text text-anchor="" x="426.10" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >futex_wait_queue_me</text>
+</g>
+<g class="func_g" onmouseover="s('__send (1,462 samples, 3.27%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__send (1,462 samples, 3.27%)</title><rect x="1038.6" y="273" width="38.6" height="15.0" fill="rgb(211,104,17)" rx="2" ry="2" />
+<text text-anchor="" x="1041.59" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >__s..</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (13 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (13 samples, 0.03%)</title><rect x="1076.4" y="65" width="0.4" height="15.0" fill="rgb(219,127,53)" rx="2" ry="2" />
+<text text-anchor="" x="1079.44" y="75.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (1,433 samples, 3.20%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (1,433 samples, 3.20%)</title><rect x="1038.6" y="225" width="37.8" height="15.0" fill="rgb(213,228,3)" rx="2" ry="2" />
+<text text-anchor="" x="1041.65" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >__s..</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN18vframeStreamCommon25security_get_caller_frameEi (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN18vframeStreamCommon25security_get_caller_frameEi (4 samples, 0.01%)</title><rect x="1038.3" y="353" width="0.1" height="15.0" fill="rgb(244,114,44)" rx="2" ry="2" />
+<text text-anchor="" x="1041.33" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)</title><rect x="1094.5" y="257" width="0.1" height="15.0" fill="rgb(206,5,20)" rx="2" ry="2" />
+<text text-anchor="" x="1097.48" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8ded38: java/net/SocketOutputStream.socketWrite0(Ljava/io/FileDescriptor,[BII)V (1,464 samples, 3.27%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8ded38: java/net/SocketOutputStream.socketWrite0(Ljava/io/FileDescriptor,[BII)V (1,464 samples, 3.27%)</title><rect x="1038.5" y="321" width="38.7" height="15.0" fill="rgb(237,205,49)" rx="2" ry="2" />
+<text text-anchor="" x="1041.54" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('NET_Read (46 samples, 0.10%)')" onmouseout="c()" onclick="zoom(this)">
+<title>NET_Read (46 samples, 0.10%)</title><rect x="1077.2" y="305" width="1.2" height="15.0" fill="rgb(238,99,11)" rx="2" ry="2" />
+<text text-anchor="" x="1080.18" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (23,263 samples, 51.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (23,263 samples, 51.99%)</title><rect x="423.2" y="241" width="613.5" height="15.0" fill="rgb(211,95,43)" rx="2" ry="2" />
+<text text-anchor="" x="426.16" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >__sched_text_start</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)</title><rect x="1094.5" y="241" width="0.1" height="15.0" fill="rgb(238,197,46)" rx="2" ry="2" />
+<text text-anchor="" x="1097.48" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__lll_lock_wait (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__lll_lock_wait (4,918 samples, 10.99%)</title><rect x="293.4" y="305" width="129.7" height="15.0" fill="rgb(237,78,5)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >__lll_lock_wait</text>
+</g>
+<g class="func_g" onmouseover="s('tracesys_phase2 (23,265 samples, 52.00%)')" onmouseout="c()" onclick="zoom(this)">
+<title>tracesys_phase2 (23,265 samples, 52.00%)</title><rect x="423.1" y="337" width="613.6" height="15.0" fill="rgb(245,105,44)" rx="2" ry="2" />
+<text text-anchor="" x="426.10" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tracesys_phase2</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)</title><rect x="1094.3" y="97" width="0.1" height="15.0" fill="rgb(242,8,1)" rx="2" ry="2" />
+<text text-anchor="" x="1097.29" y="107.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('int_careful (1,433 samples, 3.20%)')" onmouseout="c()" onclick="zoom(this)">
+<title>int_careful (1,433 samples, 3.20%)</title><rect x="1038.6" y="257" width="37.8" height="15.0" fill="rgb(250,91,30)" rx="2" ry="2" />
+<text text-anchor="" x="1041.65" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >int..</text>
+</g>
+<g class="func_g" onmouseover="s('do_notify_resume (501 samples, 1.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>do_notify_resume (501 samples, 1.12%)</title><rect x="1081.4" y="337" width="13.2" height="15.0" fill="rgb(212,171,44)" rx="2" ry="2" />
+<text text-anchor="" x="1084.42" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('poll_schedule_timeout (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>poll_schedule_timeout (3,566 samples, 7.97%)</title><rect x="1096.0" y="289" width="94.0" height="15.0" fill="rgb(217,205,11)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >poll_schedu..</text>
+</g>
+<g class="func_g" onmouseover="s('_L_cond_lock_886 (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_L_cond_lock_886 (4,918 samples, 10.99%)</title><rect x="293.4" y="321" width="129.7" height="15.0" fill="rgb(210,198,12)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_L_cond_lock_886</text>
+</g>
+<g class="func_g" onmouseover="s('0xdc544ae0: org/apache/catalina/connector/CoyoteAdapter.service(Lorg/apache/coyote/Request,Lorg/apache/coyote/Response,)V (1,464 samples, 3.27%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc544ae0: org/apache/catalina/connector/CoyoteAdapter.service(Lorg/apache/coyote/Request,Lorg/apache/coyote/Response,)V (1,464 samples, 3.27%)</title><rect x="1038.5" y="385" width="38.7" height="15.0" fill="rgb(218,20,27)" rx="2" ry="2" />
+<text text-anchor="" x="1041.54" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23,263 samples, 51.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23,263 samples, 51.99%)</title><rect x="423.2" y="209" width="613.5" height="15.0" fill="rgb(221,9,1)" rx="2" ry="2" />
+<text text-anchor="" x="426.16" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136</text>
+</g>
+<g class="func_g" onmouseover="s('0xdbc34a68: java/lang/Thread.run()V (33,999 samples, 75.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdbc34a68: java/lang/Thread.run()V (33,999 samples, 75.99%)</title><rect x="293.3" y="449" width="896.7" height="15.0" fill="rgb(220,212,50)" rx="2" ry="2" />
+<text text-anchor="" x="296.35" y="459.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xdbc34a68: java/lang/Thread.run()V</text>
+</g>
+<g class="func_g" onmouseover="s('SYSC_accept4 (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>SYSC_accept4 (47 samples, 0.11%)</title><rect x="1094.7" y="305" width="1.3" height="15.0" fill="rgb(219,153,1)" rx="2" ry="2" />
+<text text-anchor="" x="1097.71" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (11 samples, 0.02%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (11 samples, 0.02%)</title><rect x="1095.5" y="209" width="0.2" height="15.0" fill="rgb(226,174,4)" rx="2" ry="2" />
+<text text-anchor="" x="1098.45" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_cond_resched (23 samples, 0.05%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_cond_resched (23 samples, 0.05%)</title><rect x="1094.8" y="257" width="0.6" height="15.0" fill="rgb(211,200,7)" rx="2" ry="2" />
+<text text-anchor="" x="1097.77" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (11 samples, 0.02%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (11 samples, 0.02%)</title><rect x="1095.5" y="193" width="0.2" height="15.0" fill="rgb(223,65,20)" rx="2" ry="2" />
+<text text-anchor="" x="1098.45" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('get_empty_filp (13 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>get_empty_filp (13 samples, 0.03%)</title><rect x="1095.5" y="257" width="0.3" height="15.0" fill="rgb(231,146,42)" rx="2" ry="2" />
+<text text-anchor="" x="1098.45" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc39aa70: org/apache/tomcat/util/net/JIoEndpoint.setSocketOptions(Ljava/net/Socket,)Z (49 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc39aa70: org/apache/tomcat/util/net/JIoEndpoint.setSocketOptions(Ljava/net/Socket,)Z (49 samples, 0.11%)</title><rect x="1036.7" y="417" width="1.3" height="15.0" fill="rgb(209,229,2)" rx="2" ry="2" />
+<text text-anchor="" x="1039.67" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)</title><rect x="1095.8" y="145" width="0.2" height="15.0" fill="rgb(209,197,49)" rx="2" ry="2" />
+<text text-anchor="" x="1098.80" y="155.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (11 samples, 0.02%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (11 samples, 0.02%)</title><rect x="1095.5" y="177" width="0.2" height="15.0" fill="rgb(247,41,43)" rx="2" ry="2" />
+<text text-anchor="" x="1098.45" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('setsockopt (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>setsockopt (47 samples, 0.11%)</title><rect x="1036.7" y="337" width="1.2" height="15.0" fill="rgb(224,185,52)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('tracesys_phase2 (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>tracesys_phase2 (47 samples, 0.11%)</title><rect x="1036.7" y="321" width="1.2" height="15.0" fill="rgb(234,109,37)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8df188: java/net/SocketOutputStream.write([BII)V (1,464 samples, 3.27%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8df188: java/net/SocketOutputStream.write([BII)V (1,464 samples, 3.27%)</title><rect x="1038.5" y="337" width="38.7" height="15.0" fill="rgb(210,112,42)" rx="2" ry="2" />
+<text text-anchor="" x="1041.54" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (47 samples, 0.11%)</title><rect x="1036.7" y="209" width="1.2" height="15.0" fill="rgb(252,115,2)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('schedule_hrtimeout_range (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>schedule_hrtimeout_range (3,566 samples, 7.97%)</title><rect x="1096.0" y="273" width="94.0" height="15.0" fill="rgb(207,148,52)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >schedule_hr..</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (47 samples, 0.11%)</title><rect x="1036.7" y="161" width="1.2" height="15.0" fill="rgb(246,189,31)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="171.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('sys_accept (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>sys_accept (47 samples, 0.11%)</title><rect x="1094.7" y="321" width="1.3" height="15.0" fill="rgb(244,62,13)" rx="2" ry="2" />
+<text text-anchor="" x="1097.71" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4,918 samples, 10.99%)</title><rect x="293.4" y="161" width="129.7" height="15.0" fill="rgb(217,57,21)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="171.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xffffffffc0d3a0..</text>
+</g>
+<g class="func_g" onmouseover="s('inet_accept (25 samples, 0.06%)')" onmouseout="c()" onclick="zoom(this)">
+<title>inet_accept (25 samples, 0.06%)</title><rect x="1094.7" y="289" width="0.7" height="15.0" fill="rgb(244,137,13)" rx="2" ry="2" />
+<text text-anchor="" x="1097.71" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('poll_schedule_timeout (108 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>poll_schedule_timeout (108 samples, 0.24%)</title><rect x="1078.4" y="225" width="2.8" height="15.0" fill="rgb(243,195,13)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)</title><rect x="1095.8" y="177" width="0.2" height="15.0" fill="rgb(226,3,29)" rx="2" ry="2" />
+<text text-anchor="" x="1098.80" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__poll_nocancel (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__poll_nocancel (3,566 samples, 7.97%)</title><rect x="1096.0" y="353" width="94.0" height="15.0" fill="rgb(209,67,17)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >__poll_noca..</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (1,433 samples, 3.20%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (1,433 samples, 3.20%)</title><rect x="1038.6" y="193" width="37.8" height="15.0" fill="rgb(209,107,28)" rx="2" ry="2" />
+<text text-anchor="" x="1041.65" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xf..</text>
+</g>
+<g class="func_g" onmouseover="s('_cond_resched (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_cond_resched (4 samples, 0.01%)</title><rect x="1078.3" y="161" width="0.1" height="15.0" fill="rgb(243,218,36)" rx="2" ry="2" />
+<text text-anchor="" x="1081.28" y="171.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)</title><rect x="1078.3" y="97" width="0.1" height="15.0" fill="rgb(208,168,53)" rx="2" ry="2" />
+<text text-anchor="" x="1081.28" y="107.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('futex_wait_queue_me (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>futex_wait_queue_me (4,918 samples, 10.99%)</title><rect x="293.4" y="225" width="129.7" height="15.0" fill="rgb(210,11,3)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >futex_wait_queue..</text>
+</g>
+<g class="func_g" onmouseover="s('schedule_user (1,433 samples, 3.20%)')" onmouseout="c()" onclick="zoom(this)">
+<title>schedule_user (1,433 samples, 3.20%)</title><rect x="1038.6" y="241" width="37.8" height="15.0" fill="rgb(211,159,14)" rx="2" ry="2" />
+<text text-anchor="" x="1041.65" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >sch..</text>
+</g>
+<g class="func_g" onmouseover="s('dput (487 samples, 1.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>dput (487 samples, 1.09%)</title><rect x="1081.4" y="273" width="12.9" height="15.0" fill="rgb(229,197,0)" rx="2" ry="2" />
+<text text-anchor="" x="1084.45" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (3,566 samples, 7.97%)</title><rect x="1096.0" y="225" width="94.0" height="15.0" fill="rgb(238,43,49)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >__sched_tex..</text>
+</g>
+<g class="func_g" onmouseover="s('do_sys_poll (108 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>do_sys_poll (108 samples, 0.24%)</title><rect x="1078.4" y="241" width="2.8" height="15.0" fill="rgb(233,154,26)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (12 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (12 samples, 0.03%)</title><rect x="1076.8" y="81" width="0.4" height="15.0" fill="rgb(229,40,10)" rx="2" ry="2" />
+<text text-anchor="" x="1079.83" y="91.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('tracesys_phase2 (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>tracesys_phase2 (4,918 samples, 10.99%)</title><rect x="293.4" y="289" width="129.7" height="15.0" fill="rgb(207,54,27)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tracesys_phase2</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN2os13PlatformEvent4parkEv (28,183 samples, 62.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN2os13PlatformEvent4parkEv (28,183 samples, 62.99%)</title><rect x="293.4" y="369" width="743.3" height="15.0" fill="rgb(221,38,51)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN2os13PlatformEvent4parkEv</text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8bf1a8: org/apache/coyote/http11/InternalInputBuffer.parseRequestLine()V (157 samples, 0.35%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8bf1a8: org/apache/coyote/http11/InternalInputBuffer.parseRequestLine()V (157 samples, 0.35%)</title><rect x="1077.2" y="385" width="4.1" height="15.0" fill="rgb(218,185,46)" rx="2" ry="2" />
+<text text-anchor="" x="1080.15" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('sock_alloc_file (19 samples, 0.04%)')" onmouseout="c()" onclick="zoom(this)">
+<title>sock_alloc_file (19 samples, 0.04%)</title><rect x="1095.5" y="289" width="0.5" height="15.0" fill="rgb(254,101,31)" rx="2" ry="2" />
+<text text-anchor="" x="1098.45" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('sock_close (7 samples, 0.02%)')" onmouseout="c()" onclick="zoom(this)">
+<title>sock_close (7 samples, 0.02%)</title><rect x="1094.3" y="273" width="0.2" height="15.0" fill="rgb(215,207,13)" rx="2" ry="2" />
+<text text-anchor="" x="1097.29" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__pthread_mutex_cond_lock (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__pthread_mutex_cond_lock (4,918 samples, 10.99%)</title><rect x="293.4" y="337" width="129.7" height="15.0" fill="rgb(232,59,18)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >__pthread_mutex_..</text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (487 samples, 1.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (487 samples, 1.09%)</title><rect x="1081.4" y="177" width="12.9" height="15.0" fill="rgb(224,25,36)" rx="2" ry="2" />
+<text text-anchor="" x="1084.45" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('do_futex (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>do_futex (4,918 samples, 10.99%)</title><rect x="293.4" y="257" width="129.7" height="15.0" fill="rgb(244,14,30)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >do_futex</text>
+</g>
+<g class="func_g" onmouseover="s('tracesys_phase2 (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>tracesys_phase2 (47 samples, 0.11%)</title><rect x="1094.7" y="337" width="1.3" height="15.0" fill="rgb(219,104,53)" rx="2" ry="2" />
+<text text-anchor="" x="1097.71" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__fput (495 samples, 1.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__fput (495 samples, 1.11%)</title><rect x="1081.4" y="289" width="13.1" height="15.0" fill="rgb(226,24,49)" rx="2" ry="2" />
+<text text-anchor="" x="1084.42" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('sys_poll (108 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>sys_poll (108 samples, 0.24%)</title><rect x="1078.4" y="257" width="2.8" height="15.0" fill="rgb(253,168,35)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (13 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (13 samples, 0.03%)</title><rect x="1076.4" y="81" width="0.4" height="15.0" fill="rgb(244,170,1)" rx="2" ry="2" />
+<text text-anchor="" x="1079.44" y="91.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (4,918 samples, 10.99%)</title><rect x="293.4" y="193" width="129.7" height="15.0" fill="rgb(215,157,46)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >__sched_text_start</text>
+</g>
+<g class="func_g" onmouseover="s('kmem_cache_alloc (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>kmem_cache_alloc (6 samples, 0.01%)</title><rect x="1095.8" y="241" width="0.2" height="15.0" fill="rgb(224,89,20)" rx="2" ry="2" />
+<text text-anchor="" x="1098.80" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('schedule_hrtimeout_range (108 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>schedule_hrtimeout_range (108 samples, 0.24%)</title><rect x="1078.4" y="209" width="2.8" height="15.0" fill="rgb(213,93,35)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_ZN13ObjectMonitor4waitElbP6Thread (28,183 samples, 62.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN13ObjectMonitor4waitElbP6Thread (28,183 samples, 62.99%)</title><rect x="293.4" y="385" width="743.3" height="15.0" fill="rgb(224,21,32)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >_ZN13ObjectMonitor4waitElbP6Thread</text>
+</g>
+<g class="func_g" onmouseover="s('tcp_sendmsg (27 samples, 0.06%)')" onmouseout="c()" onclick="zoom(this)">
+<title>tcp_sendmsg (27 samples, 0.06%)</title><rect x="1076.4" y="177" width="0.8" height="15.0" fill="rgb(243,43,46)" rx="2" ry="2" />
+<text text-anchor="" x="1079.44" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)</title><rect x="1095.8" y="161" width="0.2" height="15.0" fill="rgb(229,173,52)" rx="2" ry="2" />
+<text text-anchor="" x="1098.80" y="171.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__sched_text_start (13 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__sched_text_start (13 samples, 0.03%)</title><rect x="1076.4" y="129" width="0.4" height="15.0" fill="rgb(219,159,49)" rx="2" ry="2" />
+<text text-anchor="" x="1079.44" y="139.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('Java_java_net_SocketInputStream_socketRead0 (157 samples, 0.35%)')" onmouseout="c()" onclick="zoom(this)">
+<title>Java_java_net_SocketInputStream_socketRead0 (157 samples, 0.35%)</title><rect x="1077.2" y="321" width="4.1" height="15.0" fill="rgb(218,135,50)" rx="2" ry="2" />
+<text text-anchor="" x="1080.15" y="331.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (12 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (12 samples, 0.03%)</title><rect x="1076.8" y="49" width="0.4" height="15.0" fill="rgb(228,121,30)" rx="2" ry="2" />
+<text text-anchor="" x="1079.83" y="59.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)</title><rect x="1094.5" y="273" width="0.1" height="15.0" fill="rgb(232,32,10)" rx="2" ry="2" />
+<text text-anchor="" x="1097.48" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23,263 samples, 51.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23,263 samples, 51.99%)</title><rect x="423.2" y="225" width="613.5" height="15.0" fill="rgb(220,30,12)" rx="2" ry="2" />
+<text text-anchor="" x="426.16" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136</text>
+</g>
+<g class="func_g" onmouseover="s('schedule (4,918 samples, 10.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>schedule (4,918 samples, 10.99%)</title><rect x="293.4" y="209" width="129.7" height="15.0" fill="rgb(237,149,32)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >schedule</text>
+</g>
+<g class="func_g" onmouseover="s('_ZN9CodeCache9find_blobEPv (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_ZN9CodeCache9find_blobEPv (6 samples, 0.01%)</title><rect x="1038.2" y="337" width="0.1" height="15.0" fill="rgb(222,22,43)" rx="2" ry="2" />
+<text text-anchor="" x="1041.17" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('tracesys_phase2 (108 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>tracesys_phase2 (108 samples, 0.24%)</title><rect x="1078.4" y="273" width="2.8" height="15.0" fill="rgb(205,62,16)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('int_careful (41 samples, 0.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>int_careful (41 samples, 0.09%)</title><rect x="1077.2" y="273" width="1.1" height="15.0" fill="rgb(237,101,23)" rx="2" ry="2" />
+<text text-anchor="" x="1080.20" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('sock_release (7 samples, 0.02%)')" onmouseout="c()" onclick="zoom(this)">
+<title>sock_release (7 samples, 0.02%)</title><rect x="1094.3" y="257" width="0.2" height="15.0" fill="rgb(211,161,48)" rx="2" ry="2" />
+<text text-anchor="" x="1097.29" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('tracesys_phase2 (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>tracesys_phase2 (4 samples, 0.01%)</title><rect x="1078.3" y="273" width="0.1" height="15.0" fill="rgb(208,93,37)" rx="2" ry="2" />
+<text text-anchor="" x="1081.28" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (47 samples, 0.11%)</title><rect x="1036.7" y="177" width="1.2" height="15.0" fill="rgb(208,76,3)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23,263 samples, 51.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23,263 samples, 51.99%)</title><rect x="423.2" y="193" width="613.5" height="15.0" fill="rgb(211,183,50)" rx="2" ry="2" />
+<text text-anchor="" x="426.16" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (3,566 samples, 7.97%)</title><rect x="1096.0" y="161" width="94.0" height="15.0" fill="rgb(216,77,28)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="171.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xffffffffc..</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (47 samples, 0.11%)</title><rect x="1036.7" y="145" width="1.2" height="15.0" fill="rgb(209,67,10)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="155.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('lock_sock_nested (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>lock_sock_nested (4 samples, 0.01%)</title><rect x="1078.3" y="177" width="0.1" height="15.0" fill="rgb(218,219,10)" rx="2" ry="2" />
+<text text-anchor="" x="1081.28" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (6 samples, 0.01%)</title><rect x="1094.5" y="225" width="0.1" height="15.0" fill="rgb(227,1,5)" rx="2" ry="2" />
+<text text-anchor="" x="1097.48" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('clear_inode (487 samples, 1.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>clear_inode (487 samples, 1.09%)</title><rect x="1081.4" y="209" width="12.9" height="15.0" fill="rgb(206,119,29)" rx="2" ry="2" />
+<text text-anchor="" x="1084.45" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('NET_Send (1,463 samples, 3.27%)')" onmouseout="c()" onclick="zoom(this)">
+<title>NET_Send (1,463 samples, 3.27%)</title><rect x="1038.6" y="289" width="38.6" height="15.0" fill="rgb(218,50,27)" rx="2" ry="2" />
+<text text-anchor="" x="1041.57" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >NET..</text>
+</g>
+<g class="func_g" onmouseover="s('tracesys_phase2 (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>tracesys_phase2 (3,566 samples, 7.97%)</title><rect x="1096.0" y="337" width="94.0" height="15.0" fill="rgb(208,40,3)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="347.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >tracesys_ph..</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (1,433 samples, 3.20%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (1,433 samples, 3.20%)</title><rect x="1038.6" y="177" width="37.8" height="15.0" fill="rgb(248,120,49)" rx="2" ry="2" />
+<text text-anchor="" x="1041.65" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xf..</text>
+</g>
+<g class="func_g" onmouseover="s('evict (487 samples, 1.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>evict (487 samples, 1.09%)</title><rect x="1081.4" y="225" width="12.9" height="15.0" fill="rgb(249,199,20)" rx="2" ry="2" />
+<text text-anchor="" x="1084.45" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('schedule (108 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>schedule (108 samples, 0.24%)</title><rect x="1078.4" y="177" width="2.8" height="15.0" fill="rgb(217,95,31)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (487 samples, 1.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (487 samples, 1.09%)</title><rect x="1081.4" y="145" width="12.9" height="15.0" fill="rgb(230,195,54)" rx="2" ry="2" />
+<text text-anchor="" x="1084.45" y="155.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('inet_sendmsg (27 samples, 0.06%)')" onmouseout="c()" onclick="zoom(this)">
+<title>inet_sendmsg (27 samples, 0.06%)</title><rect x="1076.4" y="193" width="0.8" height="15.0" fill="rgb(226,69,30)" rx="2" ry="2" />
+<text text-anchor="" x="1079.44" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_cond_resched (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_cond_resched (6 samples, 0.01%)</title><rect x="1095.8" y="225" width="0.2" height="15.0" fill="rgb(231,190,11)" rx="2" ry="2" />
+<text text-anchor="" x="1098.80" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8dcf38: java/net/SocketInputStream.read([BIII)I (157 samples, 0.35%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8dcf38: java/net/SocketInputStream.read([BIII)I (157 samples, 0.35%)</title><rect x="1077.2" y="353" width="4.1" height="15.0" fill="rgb(250,35,46)" rx="2" ry="2" />
+<text text-anchor="" x="1080.15" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__alloc_skb (14 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__alloc_skb (14 samples, 0.03%)</title><rect x="1076.8" y="145" width="0.4" height="15.0" fill="rgb(243,21,12)" rx="2" ry="2" />
+<text text-anchor="" x="1079.78" y="155.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('do_sock_sendmsg (27 samples, 0.06%)')" onmouseout="c()" onclick="zoom(this)">
+<title>do_sock_sendmsg (27 samples, 0.06%)</title><rect x="1076.4" y="209" width="0.8" height="15.0" fill="rgb(238,227,26)" rx="2" ry="2" />
+<text text-anchor="" x="1079.44" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdbc026a8: java/lang/Object.wait(J)V (28,183 samples, 62.99%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdbc026a8: java/lang/Object.wait(J)V (28,183 samples, 62.99%)</title><rect x="293.4" y="417" width="743.3" height="15.0" fill="rgb(251,112,14)" rx="2" ry="2" />
+<text text-anchor="" x="296.40" y="427.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xdbc026a8: java/lang/Object.wait(J)V</text>
+</g>
+<g class="func_g" onmouseover="s('NET_Timeout (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>NET_Timeout (3,566 samples, 7.97%)</title><rect x="1096.0" y="369" width="94.0" height="15.0" fill="rgb(234,224,48)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >NET_Timeout</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23 samples, 0.05%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (23 samples, 0.05%)</title><rect x="1094.8" y="209" width="0.6" height="15.0" fill="rgb(218,186,28)" rx="2" ry="2" />
+<text text-anchor="" x="1097.77" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (41 samples, 0.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d3a081 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (41 samples, 0.09%)</title><rect x="1077.2" y="209" width="1.1" height="15.0" fill="rgb(232,160,41)" rx="2" ry="2" />
+<text text-anchor="" x="1080.20" y="219.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdbcb7e20: java/security/AccessController.doPrivileged(Ljava/security/PrivilegedExceptionAction,)Ljava/lang/Object, (21 samples, 0.05%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdbcb7e20: java/security/AccessController.doPrivileged(Ljava/security/PrivilegedExceptionAction,)Ljava/lang/Object, (21 samples, 0.05%)</title><rect x="1038.0" y="385" width="0.5" height="15.0" fill="rgb(222,166,32)" rx="2" ry="2" />
+<text text-anchor="" x="1040.99" y="395.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (12 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (12 samples, 0.03%)</title><rect x="1076.8" y="33" width="0.4" height="15.0" fill="rgb(220,62,10)" rx="2" ry="2" />
+<text text-anchor="" x="1079.83" y="43.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (108 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (108 samples, 0.24%)</title><rect x="1078.4" y="113" width="2.8" height="15.0" fill="rgb(236,5,19)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="123.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (11 samples, 0.02%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d346f9 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (11 samples, 0.02%)</title><rect x="1095.5" y="161" width="0.2" height="15.0" fill="rgb(208,153,44)" rx="2" ry="2" />
+<text text-anchor="" x="1098.45" y="171.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('____fput (495 samples, 1.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>____fput (495 samples, 1.11%)</title><rect x="1081.4" y="305" width="13.1" height="15.0" fill="rgb(240,81,52)" rx="2" ry="2" />
+<text text-anchor="" x="1084.42" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('futex_wait (23,265 samples, 52.00%)')" onmouseout="c()" onclick="zoom(this)">
+<title>futex_wait (23,265 samples, 52.00%)</title><rect x="423.1" y="289" width="613.6" height="15.0" fill="rgb(250,125,27)" rx="2" ry="2" />
+<text text-anchor="" x="426.10" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >futex_wait</text>
+</g>
+<g class="func_g" onmouseover="s('schedule (3,566 samples, 7.97%)')" onmouseout="c()" onclick="zoom(this)">
+<title>schedule (3,566 samples, 7.97%)</title><rect x="1096.0" y="241" width="94.0" height="15.0" fill="rgb(242,148,8)" rx="2" ry="2" />
+<text text-anchor="" x="1098.95" y="251.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >schedule</text>
+</g>
+<g class="func_g" onmouseover="s('inet_release (7 samples, 0.02%)')" onmouseout="c()" onclick="zoom(this)">
+<title>inet_release (7 samples, 0.02%)</title><rect x="1094.3" y="225" width="0.2" height="15.0" fill="rgb(206,125,2)" rx="2" ry="2" />
+<text text-anchor="" x="1097.29" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('lock_sock_nested (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>lock_sock_nested (4 samples, 0.01%)</title><rect x="1094.3" y="193" width="0.1" height="15.0" fill="rgb(214,179,10)" rx="2" ry="2" />
+<text text-anchor="" x="1097.29" y="203.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (108 samples, 0.24%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (108 samples, 0.24%)</title><rect x="1078.4" y="145" width="2.8" height="15.0" fill="rgb(225,13,7)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="155.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('_cond_resched (6 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>_cond_resched (6 samples, 0.01%)</title><rect x="1094.5" y="305" width="0.1" height="15.0" fill="rgb(220,115,50)" rx="2" ry="2" />
+<text text-anchor="" x="1097.48" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('SYSC_sendto (27 samples, 0.06%)')" onmouseout="c()" onclick="zoom(this)">
+<title>SYSC_sendto (27 samples, 0.06%)</title><rect x="1076.4" y="225" width="0.8" height="15.0" fill="rgb(249,31,24)" rx="2" ry="2" />
+<text text-anchor="" x="1079.44" y="235.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('int_signal (501 samples, 1.12%)')" onmouseout="c()" onclick="zoom(this)">
+<title>int_signal (501 samples, 1.12%)</title><rect x="1081.4" y="353" width="13.2" height="15.0" fill="rgb(246,211,43)" rx="2" ry="2" />
+<text text-anchor="" x="1084.42" y="363.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('__dentry_kill (487 samples, 1.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>__dentry_kill (487 samples, 1.09%)</title><rect x="1081.4" y="257" width="12.9" height="15.0" fill="rgb(249,136,37)" rx="2" ry="2" />
+<text text-anchor="" x="1084.45" y="267.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('recv (46 samples, 0.10%)')" onmouseout="c()" onclick="zoom(this)">
+<title>recv (46 samples, 0.10%)</title><rect x="1077.2" y="289" width="1.2" height="15.0" fill="rgb(254,115,20)" rx="2" ry="2" />
+<text text-anchor="" x="1080.18" y="299.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xdc8a47e0: org/apache/coyote/http11/Http11Processor.action(Lorg/apache/coyote/ActionCode,Ljava/lang/Object,)V (1,464 samples, 3.27%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xdc8a47e0: org/apache/coyote/http11/Http11Processor.action(Lorg/apache/coyote/ActionCode,Ljava/lang/Object,)V (1,464 samples, 3.27%)</title><rect x="1038.5" y="369" width="38.7" height="15.0" fill="rgb(206,222,41)" rx="2" ry="2" />
+<text text-anchor="" x="1041.54" y="379.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  >0xd..</text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (13 samples, 0.03%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (13 samples, 0.03%)</title><rect x="1076.4" y="113" width="0.4" height="15.0" fill="rgb(209,64,18)" rx="2" ry="2" />
+<text text-anchor="" x="1079.44" y="123.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('NET_Timeout (110 samples, 0.25%)')" onmouseout="c()" onclick="zoom(this)">
+<title>NET_Timeout (110 samples, 0.25%)</title><rect x="1078.4" y="305" width="2.9" height="15.0" fill="rgb(232,32,50)" rx="2" ry="2" />
+<text text-anchor="" x="1081.39" y="315.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('tcp_setsockopt (47 samples, 0.11%)')" onmouseout="c()" onclick="zoom(this)">
+<title>tcp_setsockopt (47 samples, 0.11%)</title><rect x="1036.7" y="273" width="1.2" height="15.0" fill="rgb(247,51,27)" rx="2" ry="2" />
+<text text-anchor="" x="1039.69" y="283.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d1c014 [stap_5f8597a0c55127ad10b250655965fcf5_15136 (4 samples, 0.01%)</title><rect x="1094.3" y="145" width="0.1" height="15.0" fill="rgb(225,33,37)" rx="2" ry="2" />
+<text text-anchor="" x="1097.29" y="155.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+<g class="func_g" onmouseover="s('0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (41 samples, 0.09%)')" onmouseout="c()" onclick="zoom(this)">
+<title>0xffffffffc0d2f8ef [stap_5f8597a0c55127ad10b250655965fcf5_15136 (41 samples, 0.09%)</title><rect x="1077.2" y="177" width="1.1" height="15.0" fill="rgb(232,217,22)" rx="2" ry="2" />
+<text text-anchor="" x="1080.20" y="187.5" font-size="12" font-family="Verdana" fill="rgb(0,0,0)"  ></text>
+</g>
+</svg>

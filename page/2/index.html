@@ -77,6 +77,99 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
+      <a href="/2015/08/24/outputstream_write/" title="自顶向下话socket之outputStream" itemprop="url">自顶向下话socket之outputStream</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-08-24T13:42:51.000Z" itemprop="datePublished"> 发表于 2015-08-24</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。<br>在本篇里讨论socket的outputStream的读操作。<br>在java中，使用<code>outputStream.write(b, 0, b.length)</code>发送数据，下面自顶向下进行讨论，在内核部分，关注的是开发网络程序及调优，密切相关的缓存、等待、时延相关的部分。</p>
+<h2 id="JDK实现">JDK实现</h2><p>最终调用到本地方法<code>Java_java_net_SocketOutputStream_socketWrite0</code>，在其中调用<code>NET_Send</code>发送，即使用blocking io wrapper里的NET_Send，保证关闭的时候，不至于退出不了，详情见<a href="http://jangzq.info/2015/08/06/jdk_linux_close/">自顶向下话socket之blocking io wrapper</a>， 在其中调用的是send系统调用。</p>
+<h2 id="linux内核实现">linux内核实现</h2><h3 id="主要流程">主要流程</h3><p>同connect，send系统调用，最终调用的是tcp proto的tcp_sendmsg方法，现在介绍这个方法的主要部分。</p>
+<ol>
+<li>首先检查socket是否被关闭了，或者存在错误，如果存在错误，则转到错误处理。这个说明了如果一个程序不停的发送数据，发送出错不一定会立刻发现，有可能在后面的发送中发现。</li>
+<li>得到当前的mss，计算时需要考虑SACKs和IP选项，以及PMTU发现事件。</li>
+<li><p>将数据拷贝到写缓冲区。</p>
+<ol>
+<li><p>如果输出队列（struct sock中的struct sk_buff_head sk_write_queue）中的最后一个sk_buff已经超过了mss，检查是否可以分配一个新的sk_buff，首先需要检查当前缓存的数据（sk-&gt;sk_wmem_queued）是否超过了发送缓存的大小（sk-&gt;sk_sndbuf），如果小于发送缓存大小，还需要判断要分配的内存是否超过了tcp协议的内存限制（另文描述），如果上述两个判断不满足，则需要等待（等待前需要把已经拷贝的数据发送），等待超时时间为SO_SNDTIMEO(如果是non-block，不需要等待），如果满足了，将新分配的sk_buff加入到输出队列。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!sk_stream_memory_free(sk))</span><br><span class="line">    <span class="keyword">goto</span> wait_for_sndbuf;</span><br><span class="line"></span><br><span class="line">skb = sk_stream_alloc_skb(sk,</span><br><span class="line">              select_size(sk, sg),</span><br><span class="line">              sk-&gt;sk_allocation);</span><br><span class="line"><span class="keyword">if</span> (!skb)</span><br><span class="line">    <span class="keyword">goto</span> wait_for_memory;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>将数据拷贝到skb中，先在线性区分配，如果线性区没有空间，则尝试在frag_list中分配，在这里不详细描述。</p>
+</li>
+</ol>
+</li>
+<li><p>检查是否需要立即发送，在<code>forced_push</code>方法里，当需要发送的数据，大于对方声明的最大窗口大小的一半时，需要立即发送。如果不需要立即发送，并且只有这一个skb，只发送当前的skb。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (forced_push(tp)) &#123;</span><br><span class="line">          tcp_mark_push(tp, skb);</span><br><span class="line">          <span class="keyword">__t</span>cp_push_pending_frames(sk, mss_now, TCP_NAGLE_PUSH);</span><br><span class="line">      &#125; <span class="keyword">else</span> <span class="keyword">if</span> (skb == tcp_send_head(sk))</span><br><span class="line">          tcp_push_one(sk, mss_now);</span><br></pre></td></tr></table></figure>
+<p>其中判断逻辑：</p>
+   <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">inline</span> <span class="keyword">bool</span> <span class="title">forced_push</span><span class="params">(<span class="keyword">const</span> <span class="keyword">struct</span> tcp_sock *tp)</span></span><br><span class="line"></span>&#123;   </span><br><span class="line">     <span class="keyword">return</span> after(tp-&gt;write_seq, tp-&gt;pushed_seq + (tp-&gt;max_window &gt;&gt; <span class="number">1</span>));</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<h3 id="发生错误后的流程">发生错误后的流程</h3><p>当发生错误，比如等待内存超时，如果已经将部分数据拷贝到了发送缓冲，则请求发送这些数据，并且返回发送的字节数，请看do_error后的操作。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">out:</span><br><span class="line">    <span class="keyword">if</span> (copied)</span><br><span class="line">        tcp_push(sk, flags, mss_now, tp-&gt;nonagle, size_goal);</span><br><span class="line">out_nopush:</span><br><span class="line">    release_sock(sk);</span><br><span class="line">    <span class="keyword">return</span> copied + copied_syn;</span><br><span class="line"></span><br><span class="line">do_error:</span><br><span class="line">    <span class="keyword">if</span> (copied + copied_syn)</span><br><span class="line">        <span class="keyword">goto</span> out;</span><br></pre></td></tr></table></figure></p>
+<h3 id="nagle和cork">nagle和cork</h3><p>在这里，主要关注nagle和cork。nagle是标准协议，而cork是linux独有的，都是为了减少小包传输，减少网络负载，但是又有所不同，下面通过源码说明。<br>nagle协议默认开启，可以通过TCP_NODELAY关闭，cork可以通过TCP_CORK打开，在实现上都是保存在tcp_sock的nonagle属性。<br>判断是否应用nagle和cork协议的方法是：<code>tcp_nagle_test</code>，从中也可以看出两者的异同。这个方法如果返回true，则是允许发送这个包，声明为：<code>static inline bool tcp_nagle_test(const struct tcp_sock *tp, const struct sk_buff *skb, unsigned int cur_mss, int nonagle)</code>。</p>
+<ol>
+<li><p>首先如果nonagle参数包含TCP_NAGLE_PUSH，说明是调用者需要立即发送包，如nagle和cork的参数状态发生变化。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (nonagle &amp; TCP_NAGLE_PUSH)</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">true</span>;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果数据是urgent data，或者包含FIN，需要立即发送。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (tcp_urg_mode(tp) || (TCP_SKB_CB(skb)-&gt;tcp_flags &amp; TCPHDR_FIN))</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">true</span>;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>调用<code>tcp_nagle_check</code>判断。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!tcp_nagle_check(skb-&gt;len &lt; cur_mss, tp, nonagle))</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">true</span>;</span><br></pre></td></tr></table></figure>
+<p>此函数定义为：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">return</span> partial &amp;&amp;</span><br><span class="line">    ((nonagle &amp; TCP_NAGLE_CORK) ||</span><br><span class="line">     (!nonagle &amp;&amp; tp-&gt;packets_out &amp;&amp; tcp_minshall_check(tp)));</span><br></pre></td></tr></table></figure>
+<p>这个函数的返回值如果为true的时候，是不发送， 不发送的条件如下：<br>1）如果包不满，即小于mss, 并且设置了TCP_NAGLE_CORK，则不发送。<br>2）如果包不满，并且没有设置TCP_NODELAY，并且有包没有收到ack，则不发送。</p>
+</li>
+</ol>
+<p>从上文可以看出，cork比nagle严格，只要包不满，不管前面还有没有包没有收到ack，全都不发送，等着拼成大包，而nagle算法，如果前面的包都收到ack了，即使小包也发送，也就是当网络非常快的时候，还是会存在大量的小包。<br><strong>注</strong>：nagle和cork，在一段时间后，即使不符合条件，也会发送出去，这个时间一般为200或者300毫秒。</p>
+
+        
+        
+        <p class="article-more-link">
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jdk/">jdk</a><a href="/tags/linux内核/">linux内核</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
       <a href="/2015/08/24/inputstream_read/" title="自顶向下话socket之inputStream" itemprop="url">自顶向下话socket之inputStream</a>
   </h1>
   <p class="article-author">By
@@ -614,63 +707,6 @@
         <p class="article-more-link">
           
             <a href="/2015/07/31/ParNewGeneration_collect/#more">Read More</a>
-          
-       </p>
-    </div>
-    <footer class="article-footer clearfix">
-<div class="article-catetags">
-
-
-  <div class="article-tags">
-  
-  <span></span> <a href="/tags/jvm/">jvm</a>
-  </div>
-
-</div>
-
-
-
-
-<div class="comments-count">
-	
-</div>
-
-</footer>
-
-
-    </article>
-
-
-
-
-
-
-   
-    
-    <article class="post-expand post" itemprop="articleBody"> 
-        <header class="article-info clearfix">
-  <h1 itemprop="name">
-    
-      <a href="/2015/07/31/DefNewGeneration_collect/" title="DefNewGeneration垃圾收集" itemprop="url">DefNewGeneration垃圾收集</a>
-  </h1>
-  <p class="article-author">By
-       
-		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
-		
-  <p class="article-time">
-    <time datetime="2015-07-31T14:12:10.000Z" itemprop="datePublished"> 发表于 2015-07-31</time>
-    
-  </p>
-</header>
-    <div class="article-content">
-        
-        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<h2 id="正文">正文</h2><p>DefNewGeneration的垃圾回收方法入口在：DefNewGeneration::collect。<br>
-        
-        
-        <p class="article-more-link">
-          
-            <a href="/2015/07/31/DefNewGeneration_collect/#more">Read More</a>
           
        </p>
     </div>

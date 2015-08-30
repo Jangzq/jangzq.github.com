@@ -77,6 +77,64 @@
         <header class="article-info clearfix">
   <h1 itemprop="name">
     
+      <a href="/2015/08/06/java_connect/" title="自顶向下话socket之connect" itemprop="url">自顶向下话socket之connect</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-08-06T15:51:01.000Z" itemprop="datePublished"> 发表于 2015-08-06</time>
+    
+  </p>
+</header>
+    <div class="article-content">
+        
+        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在“自顶向下话socket”系列里，将从jdk向下一直到linux内核，通过源码来揭示socket操作究竟是什么原理，都消耗了哪些资源，受到什么限制，为开发出稳定、高效的网络程序，乃至诊断、排障、调优提供理论基础。<br>在本篇里讨论socket的connect这个操作。<br>当java程序，进行socket connect时，调用方法为<code>PlainSocketImpl</code>中的native方法<code>native void socketConnect(InetAddress address, int port, int timeout) throws IOException</code>。</p>
+<h2 id="JDK实现">JDK实现</h2><p>jdk的connect操作，先是调用connect系统调用，然后根据错误码抛出异常，并且设置java类的参数。需要注意的是，在linux版本的jdk中，根据是否设置了超时参数，调用connect方式不同，见<code>Java_java_net_PlainSocketImpl_socketConnect</code><br>
+        
+        
+        <p class="article-more-link">
+          
+            <a href="/2015/08/06/java_connect/#more">Read More</a>
+          
+       </p>
+    </div>
+    <footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jdk/">jdk</a><a href="/tags/linux内核/">linux内核</a>
+  </div>
+
+</div>
+
+
+
+
+<div class="comments-count">
+	
+</div>
+
+</footer>
+
+
+    </article>
+
+
+
+
+
+
+   
+    
+    <article class="post-expand post" itemprop="articleBody"> 
+        <header class="article-info clearfix">
+  <h1 itemprop="name">
+    
       <a href="/2015/08/06/jdk_linux_close/" title="自顶向下话socket之blocking io wrapper" itemprop="url">自顶向下话socket之blocking io wrapper</a>
   </h1>
   <p class="article-author">By
@@ -631,66 +689,6 @@
 
 
 
-   
-    
-    <article class="post-expand post" itemprop="articleBody"> 
-        <header class="article-info clearfix">
-  <h1 itemprop="name">
-    
-      <a href="/2015/07/27/GenCollectedHeap_size/" title="分代内存管理之Generation Size" itemprop="url">分代内存管理之Generation Size</a>
-  </h1>
-  <p class="article-author">By
-       
-		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
-		
-  <p class="article-time">
-    <time datetime="2015-07-27T14:04:41.000Z" itemprop="datePublished"> 发表于 2015-07-27</time>
-    
-  </p>
-</header>
-    <div class="article-content">
-        
-        <p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>分代内存管理中各个generation的内存大小设置，保存在CollectorPolicy及其子类里，如下图所示。<br><img src="/images/gen_size.png" alt="CollectorPolicy"><br>从图中可以看出，CollectorPolicy类管理heap的大小，GenCollectorPolicy类管理着Generation 0的大小，而TwoGenerationCollectorPolicy管理着Generation 1的大小。</p>
-<h2 id="Heap大小">Heap大小</h2><p>见：<a href="http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/">垃圾收集框架：CollectedHeap和CollectorPolicy</a></p>
-<h2 id="Generation">Generation</h2><p><strong>Generation大小必须以<code>min_alignment()</code>对齐，一般为64k，并且最小不能小于<code>min_alignment()</code>。为了描述方便，下文有的地方省略对齐及最小值调整部分，请知晓</strong></p>
-<h3 id="Generation_0">Generation 0</h3>
-        
-        
-        <p class="article-more-link">
-          
-            <a href="/2015/07/27/GenCollectedHeap_size/#more">Read More</a>
-          
-       </p>
-    </div>
-    <footer class="article-footer clearfix">
-<div class="article-catetags">
-
-
-  <div class="article-tags">
-  
-  <span></span> <a href="/tags/jvm/">jvm</a>
-  </div>
-
-</div>
-
-
-
-
-<div class="comments-count">
-	
-</div>
-
-</footer>
-
-
-    </article>
-
-
-
-
-
-
 
   <nav id="page-nav" class="clearfix">
     <a class="extend prev" rel="prev" href="/"><span></span>Prev</a><a class="page-number" href="/">1</a><span class="page-number current">2</span><a class="page-number" href="/page/3/">3</a><a class="extend next" rel="next" href="/page/3/">Next<span></span></a>
@@ -715,7 +713,7 @@
 			
 		
 			
-				<li><a href="/tags/jvm/" title="jvm">jvm<sup>11</sup></a></li>
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>12</sup></a></li>
 			
 		
 			

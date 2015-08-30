@@ -5,7 +5,7 @@
   <subtitle><![CDATA[关注代码的秘密， 记录探索点滴， 分享技术收获]]></subtitle>
   <link href="/atom.xml" rel="self"/>
   <link href="http://jangzq.info//"/>
-  <updated>2015-08-24T14:07:30.000Z</updated>
+  <updated>2015-08-30T02:50:01.000Z</updated>
   <id>http://jangzq.info//</id>
   
   <author>
@@ -14,6 +14,101 @@
   </author>
   
   <generator uri="http://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title><![CDATA[Concurrent Mark-Sweep垃圾回收]]></title>
+    <link href="http://jangzq.info/2015/08/29/cms/"/>
+    <id>http://jangzq.info/2015/08/29/cms/</id>
+    <published>2015-08-29T12:48:53.000Z</published>
+    <updated>2015-08-30T02:50:01.000Z</updated>
+    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>cms垃圾收集有两个入口，其一为后台收集（即并发收集），是保证低延时的关键，其二为前台收集，在并发收集跟不上内存使用时使用的，具有较大停顿时间。</p>
+<h2 id="并发收集">并发收集</h2><p>采用CMS，不是像其它的垃圾收集，在内存不够的时候才进行垃圾回收，所以它需要有一个线程，随时查看内存情况，然后在合适的时机进行众所周知的那几步操作：initial marking，concurrent marking, precleaning, abortable precleaning, remark, sweeping, resetting。</p>
+<h3 id="触发机制">触发机制</h3><p>这个线程为<code>ConcurrentMarkSweepThread</code>，首先看一下cms回收触发机制，在<code>ConcurrentMarkSweepThread::sleepBeforeNextCycle</code>方法中，首先等待CMSWaitDuration（缺省为2000毫秒），或者别的线程请求full gc，即最多2秒钟，就会检查一次，是否需要执行并发收集，判断逻辑在<code>CMSCollector::shouldConcurrentCollect</code>方法里，首先，如果请求了full gc，则返回true，需要执行并发收集，否则根据UseCMSInitiatingOccupancyOnly（只使用占用量作为唯一判断标准）有不同的判断方法。</p>
+<ul>
+<li><p>如果设置了UseCMSInitiatingOccupancyOnly，只以占用量作为唯一标准，代码在<code>ConcurrentMarkSweepGeneration::should_concurrent_collect</code>中，判断逻辑如下：<br>当<code>(occupancy() &gt; initiating_occupancy()</code>时，返回true，需要进行并发收集，下面看下_initiating_occupancy是如何计算的，这个值和CMSInitiatingOccupancyFraction（缺省值-1）、CMSTriggerRatio（缺省值80）、MinHeapFreeRatio（缺省值40）三个参数有关。如果CMSInitiatingOccupancyFraction大于等于0,则_initiating_occupancy设置为CMSInitiatingOccupancyFraction/100。否则，使用CMSTriggerRatio计算，在全缺省值的情况下为92%，计算方法如下，即</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">_initiating_occupancy = ((<span class="number">100</span> - MinHeapFreeRatio) + (CMSTriggerRatio * MinHeapFreeRatio) / <span class="number">100.0</span>) / <span class="number">100.0</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>如果UseCMSInitiatingOccupancyOnly为false（缺省值）时，在第一次没有统计信息的时候，当<code>_cmsGen-&gt;occupancy()&gt;CMSBootstrapOccupancy/100</code>时，启动cms收集，以后则参考过去的统计信息，决定是否启动cms收集，首先计算出预估的收集运行时间，然后再计算出预估的cms generation满的时间，如果前者大于后者，则启动cms收集，如果上述不满足，如果占用量大于_initiating_occupancy，也返回true，否则，再咨询一下实际负责存储的<code>CompactibleFreeListSpace</code>类，是否内存紧张了。<br><em>注：PrintCMSInitiationStatistics参数可以打印cms统计信息</em></p>
+</li>
+</ul>
+<h3 id="内存分配">内存分配</h3><p>CMS能并发收集，必然在此generation上的内存分配做了手脚，这是并发收集的基础。</p>
+<h4 id="直接内存分配">直接内存分配</h4><p>在<a href="http://jangzq.info/2015/07/26/GenCollectedHeap_allocate/">分代内存管理之慢速路径内存分配</a>中，我们提到了在某些条件下，直接在old generation分配内存，这时入口为<code>ConcurrentMarkSweepGeneration::allocate</code>，最终调用<code>ConcurrentMarkSweepGeneration::have_lock_and_allocate</code>，在这里，可以看到，在分配内存成功后，调用了<code>CMSCollector::direct_allocated</code>来完成并行收集相关操作，这个方法只在<code>_collectorState &gt;= Marking</code>即并行标记之后（含）起作用，在cms中使用一个bitmap记录存活的对象，所以首先，标记这个对象： <code>_markBitMap.mark(start)</code>，然后标记下一个bit，代表这个对象还没有初始化：<code>_markBitMap.mark(start + 1)</code>，然后标记这个对象的结尾，这样precleaning和sweeping阶段可以跳过没有解析和没有初始化的对象：<code>_markBitMap.mark(start + size - 1)</code>。</p>
+<h4 id="young_generation收集引起promote">young generation收集引起promote</h4><p>在<code>CMSCollector::promoted</code>方法可以看出，在<code>_collectorState &gt;= Marking</code>即并行标记之后（含），首先在位图中mark此对象，如果<code>_collectorState &lt; Sweeping</code>，即还没有开始sweeping，在_modUnionTable中标记出这一块儿内存已经dirty。为什么直接内存分配时不需要这一步，那是因为新分配的对象是没有引用的对象的。</p>
+<p>在<code>void CMSCollector::collect_in_background(bool clear_all_soft_refs, GCCause::Cause cause)</code>方法中，进入收集流程后，在一个循环里，完成cms的那几步操作。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">while</span> (_collectorState != Idling) &#123;</span><br><span class="line"> ...</span><br><span class="line"> <span class="keyword">switch</span> (_collectorState) &#123;</span><br><span class="line">    <span class="keyword">case</span> InitialMarking:</span><br><span class="line">      ......</span><br><span class="line">      <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> Marking:</span><br><span class="line">      ......</span><br><span class="line">      <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> Precleaning:</span><br><span class="line">      ......</span><br><span class="line">      <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> AbortablePreclean:</span><br><span class="line">      ......</span><br><span class="line">      <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> FinalMarking:</span><br><span class="line">      ......</span><br><span class="line">      <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> Sweeping:</span><br><span class="line"></span><br><span class="line">    <span class="keyword">case</span> Resizing: &#123;</span><br><span class="line">      ......</span><br><span class="line">      <span class="keyword">break</span>;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">case</span> Resetting:</span><br><span class="line">      ......</span><br><span class="line">      <span class="keyword">break</span>;</span><br><span class="line">    <span class="keyword">case</span> Idling:</span><br><span class="line">    <span class="keyword">default</span>:</span><br><span class="line">      ShouldNotReachHere();</span><br><span class="line">      <span class="keyword">break</span>;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h3 id="收集过程">收集过程</h3><h4 id="InitialMarking">InitialMarking</h4><p>initial marking需要暂停虚拟机，需要在VMThread中执行，主要逻辑在<code>CMSCollector::checkpointRootsInitialWork</code>，在这里为了简化起见，我们只讨论单线程执行的情况。遍历root对象，在前面的垃圾收集算法中多次提及，关键的是使用的回调方法，在这里回调为<code>MarkRefsIntoClosure</code>，对于遍历到的oop，在位图CMSCollector::_markBitMap中置位。</p>
+<h4 id="Marking">Marking</h4><p>在这里我们抛开如何给多个标记线程划分任务，只关注真正的标记部分，关键为此几句（void CMSConcMarkingTask::do_scan_and_mark(int i, CompactibleFreeListSpace* sp)）：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">Par_MarkFromRootsClosure <span class="title">cl</span><span class="params">(<span class="keyword">this</span>, _collector, my_span,</span><br><span class="line">                              &amp;_collector-&gt;_markBitMap,</span><br><span class="line">                              work_queue(i)</span>,</span><br><span class="line">                              &amp;_collector-&gt;_markStack,</span><br><span class="line">                              &amp;_collector-&gt;_revisitStack,</span><br><span class="line">                              _asynch)</span>;</span><br><span class="line">  _collector-&gt;_markBitMap.iterate(&amp;cl, my_span.start(), my_span.end());</span><br></pre></td></tr></table></figure></p>
+<p>即使用<code>Par_MarkFromRootsClosure</code>回调，来处理第一步标记的root对象，即递归标记其中使用的oop。 我们抛弃细节，关注实际的标记操作在<code>Par_PushOrMarkClosure</code>中。当一个对象被标记了，但是还没有被遍历，我们需要一个数据结构保存这样的对象，在这里对于地址大于当前处理的oop的指针，我们只是标记上即可，因为在以后的操作里，会遍历到这个对象，如果地址小于当前处理的指针，则需要放置到一个stack里，供以后遍历，这部分代码在<code>Par_PushOrMarkClosure::do_oop</code>，请自行参考。</p>
+<h4 id="Precleaning">Precleaning</h4><p>precleaning阶段最主要的工作是处理在并行marking时，promote以及直接分配的对象。另外，为了在remark阶段可以并行处理eden区域，在这里还要采样eden区域，给<code>_eden_chunk_array</code>赋值。（当CMSEdenChunksRecordAlways为true的时候，在eden区域分配内存的时候，就记录了，不必进行sample）。</p>
+<ul>
+<li><p>eden sample的触发条件如下，<code>CMSScheduleRemarkSamplingRatio</code>缺省为5, <code>CMSScheduleRemarkEdenPenetration</code>缺省为50,即used小于容量的10%时，开始sample。在<code>capacity*CMSScheduleRemarkEdenPenetration/100</code>时，就需要安排remark了，所以当used小于<code>(capacity*CMSScheduleRemarkEdenPenetration/100)/CMSScheduleRemarkSamplingRatio</code>才开始sample，否则得到不了足够的sample。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (used &lt; (capacity/(CMSScheduleRemarkSamplingRatio * <span class="number">100</span>)</span><br><span class="line">            * CMSScheduleRemarkEdenPenetration)) &#123;</span><br><span class="line">  _start_sampling = <span class="keyword">true</span>;</span><br><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">  _start_sampling = <span class="keyword">false</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>sample eden操作，在<code>CMSCollector::sample_eden</code>。</p>
+<ol>
+<li>如果_start_sampling为false，返回。</li>
+<li>将当前eden区的top_addr付给当前的_eden_chunk_array[_eden_chunk_index]，如果和之前的sample之间的差值太小，小于CMSSamplingGrain（缺省16k），则不记录，否则才记录。</li>
+<li>判断是否需要退出AbortablePreclean，当<code>used &gt;  (capacity/100 * CMSScheduleRemarkEdenPenetration)</code>（上面已经介绍了），则退出AbortablePreclean状态。</li>
+</ol>
+</li>
+<li>重新scan并行marking时，改变的对象，上文可以看出，也就是遍历modUnionTable和card table。具体在<code>CMSCollector::preclean_work</code>。<ol>
+<li>处理java reference类型对象。</li>
+<li>处理survivor区中的对象。</li>
+<li>处理modUnionTable，使用<code>preclean_mod_union_table</code>方法。</li>
+<li>处理card type，使用<code>preclean_card_table</code>方法。</li>
+</ol>
+</li>
+</ul>
+<h4 id="AbortablePreclean">AbortablePreclean</h4><p>如果young generation中gc后，紧接着就进入remark，则可能会停顿较长时间，所以需要有这个阶段，错开这两个阶段，主要逻辑在<code>CMSCollector::abortable_preclean</code>.</p>
+<ul>
+<li>如果<code>get_eden_used() &gt; CMSScheduleRemarkEdenSizeThreshold</code>，则退出此阶段。CMSScheduleRemarkEdenSizeThreshold缺省2M。</li>
+<li>循环执行<code>preclean_work</code>即和preclean阶段做的操作差不多，直到满足退出AbortablePreclean的条件（由于在preclean_work及其调用的方法里调用了<code>sample_eden</code>，由上文所述，这个方法里会进行退出AbortablePreclean的判断。</li>
+<li><p>上述循环执行的退出条件在<code>CMSCollector::should_abort_preclean</code>， 如下，即<code>used &gt;  (capacity/100 * CMSScheduleRemarkEdenPenetration)</code>，或者前台要求gc，或者增量更新可能失败（前面的文章中有所介绍）。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">_collectorState == AbortablePreclean &amp;&amp;</span><br><span class="line">     (_abort_preclean || _foregroundGCIsActive ||</span><br><span class="line">      GenCollectedHeap::heap()-&gt;incremental_collection_will_fail(<span class="keyword">true</span> <span class="comment">/* consult_young */</span>));</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>上面的循环中，如果上一次的成果太小，则等待一段时间（CMSAbortablePrecleanWaitMillis（100ms））。</p>
+</li>
+</ul>
+<h4 id="FinalMarking">FinalMarking</h4><p>在这个阶段，需要暂停虚拟机，所以在VMTHread中执行，主要逻辑在<code>CMSCollector::checkpointRootsFina</code>。</p>
+<ol>
+<li><p>如果设置了<code>CMSScavengeBeforeRemark</code>，则在remark之前，先进行一次young gc。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">int</span> level = _cmsGen-&gt;level() - <span class="number">1</span>;</span><br><span class="line">  <span class="keyword">if</span> (level &gt;= <span class="number">0</span>) &#123;</span><br><span class="line">    gch-&gt;do_collection(<span class="keyword">true</span>,        <span class="comment">// full (i.e. force, see below)</span></span><br><span class="line">                       <span class="keyword">false</span>,       <span class="comment">// !clear_all_soft_refs</span></span><br><span class="line">                       <span class="number">0</span>,           <span class="comment">// size</span></span><br><span class="line">                       <span class="keyword">false</span>,       <span class="comment">// is_tlab</span></span><br><span class="line">                       level        <span class="comment">// max_level</span></span><br><span class="line">                      );</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>并行remark的代码在<code>CMSParRemarkTask::work</code>，其流程为：<br>下面的回调都为<code>Par_MarkRefsIntoAndScanClosure</code>。</p>
+<ol>
+<li><p>把young generation当作root进行rescan，程序在<code>CMSParMarkTask::work_on_young_gen_roots</code>，在这里用到了前面的chunk，由于mark的过程大同小异，所以不详细写了。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">do_young_space_rescan(worker_id, cl, to_space, NULL, <span class="number">0</span>);</span><br><span class="line">do_young_space_rescan(worker_id, cl, from_space, sca, sct);</span><br><span class="line">do_young_space_rescan(worker_id, cl, eden_space, eca, ect);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>重新遍历root.</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">gch-&gt;gen_process_strong_roots(_collector-&gt;_cmsGen-&gt;level(),</span><br><span class="line">                        <span class="keyword">false</span>,     <span class="comment">// yg was scanned above</span></span><br><span class="line">                        <span class="keyword">false</span>,     <span class="comment">// this is parallel code</span></span><br><span class="line">                        <span class="keyword">true</span>,      <span class="comment">// collecting perm gen</span></span><br><span class="line">                        SharedHeap::ScanningOption(_collector-&gt;CMSCollector::roots_scanning_options()),</span><br><span class="line">                        &amp;par_mrias_cl,</span><br><span class="line">                        <span class="keyword">true</span>,   <span class="comment">// walk all of code cache if (so &amp; SO_CodeCache)</span></span><br><span class="line">                        NULL);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>rescan dirty card，程序在<code>CMSParRemarkTask::do_dirty_card_rescan_tasks</code>。</p>
+</li>
+</ol>
+</li>
+</ol>
+<h4 id="Sweeping">Sweeping</h4><p>清理内存，在<code>CMSCollector::sweepWork</code>。根据bitmap，遍历cms使用的CompactibleFreeListSpace，将可以清理的block清理掉，在这中间需要将连续的free block合并等等，由于sweep的时候，会存在并发的内存分配，所以还是相当复杂的。遍历CompactibleFreeListSpace的回调为<code>SweepClosure sweepClosure</code>，由于CompactibleFreeListSpace的机制，所以不可避免的出现碎片。</p>
+<h4 id="Resizing">Resizing</h4><p>重新计算此generation大小，调用的函数为<code>ConcurrentMarkSweepGeneration::compute_new_size</code>,不是重点，不再详述。</p>
+<h4 id="Resetting">Resetting</h4><p>清除 _markBitMap里的标记，为下一个循环做准备。代码在<code>CMSCollector::reset</code>。</p>
+<h2 id="前台收集">前台收集</h2><p>当并发收集的跟不上内存的需求时，这时需要同步收集，入口在<code>CMSCollector::collect</code>，大部分逻辑在<code>CMSCollector::acquire_control_and_collect</code>。</p>
+<ol>
+<li>首先，前台收集不能和后台（并发)收集同时执行，所以需要等待并发收集结束，并获取各种锁。</li>
+<li>确定收集的类型，是否compact，代码在<code>CMSCollector::decide_foreground_collection_type</code>。<br>是否compact判断，满足下面任一条件：<ul>
+<li>必须设置了UseCMSCompactAtFullCollection参数（缺省true），并且满足下面任一条件：full gc的次数大于CMSFullGCsBeforeCompaction（缺省0）; 调用System.gc; 增量收集有可能失败。</li>
+<li>如果需要清楚soft reference，并且设置了CMSCompactWhenClearAllSoftRefs（缺省true）。</li>
+</ul>
+</li>
+<li>根据是否compact，进行相应的操作。需要compact时候，调用的方式基本同<a href="http://jangzq.info/2015/08/02/tenure_collect/">TenuredGeneration垃圾收集</a>，不需要compact的，基本同上面的并发收集，在这里不再赘述。</li>
+</ol>
+]]></content>
+    <summary type="html">
+    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>cms垃圾收集有两个入口，其一为后台收集（即并发收集），是保证低延时的关键，其二为前台收集，在]]>
+    </summary>
+    
+      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
+    
+  </entry>
   
   <entry>
     <title><![CDATA[java nio之jdk篇]]></title>
@@ -1135,64 +1230,6 @@
 </ol>
 </li>
 </ul>]]>
-    
-    </summary>
-    
-      <category term="jvm" scheme="http://jangzq.info/tags/jvm/"/>
-    
-  </entry>
-  
-  <entry>
-    <title><![CDATA[分代内存管理之Generation Size]]></title>
-    <link href="http://jangzq.info/2015/07/27/GenCollectedHeap_size/"/>
-    <id>http://jangzq.info/2015/07/27/GenCollectedHeap_size/</id>
-    <published>2015-07-27T14:04:41.000Z</published>
-    <updated>2015-07-27T14:17:51.000Z</updated>
-    <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>分代内存管理中各个generation的内存大小设置，保存在CollectorPolicy及其子类里，如下图所示。<br><img src="/images/gen_size.png" alt="CollectorPolicy"><br>从图中可以看出，CollectorPolicy类管理heap的大小，GenCollectorPolicy类管理着Generation 0的大小，而TwoGenerationCollectorPolicy管理着Generation 1的大小。</p>
-<h2 id="Heap大小">Heap大小</h2><p>见：<a href="http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/">垃圾收集框架：CollectedHeap和CollectorPolicy</a></p>
-<h2 id="Generation">Generation</h2><p><strong>Generation大小必须以<code>min_alignment()</code>对齐，一般为64k，并且最小不能小于<code>min_alignment()</code>。为了描述方便，下文有的地方省略对齐及最小值调整部分，请知晓</strong></p>
-<h3 id="Generation_0">Generation 0</h3><a id="more"></a>
-<h4 id="_max_gen0_size">_max_gen0_size</h4><p>首先，计算中间值max_new_size。</p>
-<ul>
-<li>当设置了MaxNewSize参数，_max_gen0_size由此参数决定。<ol>
-<li>如果MaxNewSize小于最小对齐粒度<code>min_alignment()</code>（一般为64k），则max_new_size设为<code>min_alignment()</code>。</li>
-<li>如果大于设置的“堆的最大值”<code>max_heap_byte_size()</code>，则设为<code>align_size_down(max_heap_byte_size() - min_alignment(), min_alignment())</code></li>
-<li>否则，设为MaxNewSize，按最小对齐粒度对齐, <code>align_size_down(MaxNewSize, min_alignment())</code>。</li>
-</ol>
-</li>
-<li>当没有设置MaxNewSize参数时，设为“堆的最大值”/(NewRatio+1)，NewRatio缺省为2, 当这个值小于最小对齐粒度<code>min_alignment()</code>（一般为64k），则max_new_size设为<code>min_alignment()</code>。<br>上述结果再根据设置的“堆的最大值”和“堆的最小值”进行调整。</li>
-<li>如果“堆的最大值”等于“堆的最小值”，max_new_size不变。</li>
-<li>如果“堆的最大值”不等于“堆的最小值”，如果设置了NewSize，则max_new_size取（max_new_size， NewSize)两者最大的。<br>最后，设置_max_gen0_size为max_new_size，如果超过了“堆的最大值”，设为<code>align_size_down(max_heap_byte_size() - min_alignment(), min_alignment())</code>。</li>
-</ul>
-<h4 id="_initial_gen0_size">_initial_gen0_size</h4><ul>
-<li>如果“堆的最大值”和“堆的最小值”相等， _initial_gen0_size设为max_new_size，</li>
-<li>如果“堆的最大值”不等于“堆的最小值”，如果设置了NewSize参数，则设为NewSize。如果没有设置NewSize，设为“堆的初始值”/(NewRatio+1)，和NewSize缺省值之间最大的。</li>
-</ul>
-<p>最后，根据“heap的初始值”进行调整，如果超过了“Heap的初始值” (<code>_initial_heap_byte_size</code>)，设为<code>align_size_down(initial_heap_byte_size() - min_alignment(), min_alignment())</code>。</p>
-<p><strong>注:</strong> <em>在设置OLD Generation大小时，如果设置了OldSize，并且OldSize+_initial_gen0_size大于“堆的初始值”时，会调整此值。</em></p>
-<h4 id="_min_gen0_size">_min_gen0_size</h4><ul>
-<li>如果“堆的最大值”和“堆的最小值”相等， _min_gen0_size设为max_new_size，</li>
-<li>如果“堆的最大值”不等于“堆的最小值”，如果设置了NewSize参数，则设为NewSize。如果没有设置NewSize，设为“堆的最小值”/(NewRatio+1)，和NewSize缺省值之间最大的。</li>
-</ul>
-<p>最后，根据“heap的初始值”进行调整，如果超过了“Heap的最小值” (<code>_min_heap_byte_size</code>)，设为<code>align_size_down(min_heap_byte_size() - min_alignment(), min_alignment())</code>。</p>
-<p><strong>注:</strong> <em>在设置OLD Generation大小时，如果设置了OldSize，并且OldSize+_min_gen0_size大于“堆的最小值”时，会调整此值。</em></p>
-<h3 id="Generation_1">Generation 1</h3><h4 id="_max_gen1_size">_max_gen1_size</h4><p>设为“堆最大值”-_max_gen0_size，和min_alignment()的最大值。</p>
-<h4 id="_initial_gen1_size">_initial_gen1_size</h4><ul>
-<li>如果没有设置OldSize，设置为initial_heap_byte_size() - initial_gen0_size()。</li>
-<li>如果设置了OldSize，此值设置为OldSize，如果_initial_gen0_size+OldSize 大于“堆的初始值”，则需要调整_initial_gen0_size。</li>
-</ul>
-<h4 id="_min_gen1_size">_min_gen1_size</h4><ul>
-<li>如果没有设置OldSize，设置为initial_heap_byte_size() - _min_gen0_size。</li>
-<li>如果设置了OldSize，此值设置为OldSize，如果_min_gen0_size+OldSize 大于“堆的最小值”，则需要调整_min_gen0_size。</li>
-</ul>
-]]></content>
-    <summary type="html">
-    <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>分代内存管理中各个generation的内存大小设置，保存在CollectorPolicy及其子类里，如下图所示。<br><img src="/images/gen_size.png" alt="CollectorPolicy"><br>从图中可以看出，CollectorPolicy类管理heap的大小，GenCollectorPolicy类管理着Generation 0的大小，而TwoGenerationCollectorPolicy管理着Generation 1的大小。</p>
-<h2 id="Heap大小">Heap大小</h2><p>见：<a href="http://jangzq.info/2015/07/03/CollectedHeapCollectorPolicy/">垃圾收集框架：CollectedHeap和CollectorPolicy</a></p>
-<h2 id="Generation">Generation</h2><p><strong>Generation大小必须以<code>min_alignment()</code>对齐，一般为64k，并且最小不能小于<code>min_alignment()</code>。为了描述方便，下文有的地方省略对齐及最小值调整部分，请知晓</strong></p>
-<h3 id="Generation_0">Generation 0</h3>]]>
     
     </summary>
     

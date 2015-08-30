@@ -1,0 +1,476 @@
+
+ <!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  
+    <title>SYSTEMTAP中得到java调用栈 | Jangzq技术研究</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1,user-scalable=no">
+    
+    <meta name="author" content="Zhang Zq">
+    
+
+    
+    <meta name="description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在systemtap中得到java的调用栈，可以在java程序和libc等、linux内核之间架起一座桥梁，对于java程序的调试调优具有重要的意义。使用systemtap分析的优点有：
+
+不依赖于java版本，任何版本都可以。
+被测程序不需要添加额外的启动参数，可以在任何时候接入调试。
+
+ujvmstap是我开发的tapset，提供">
+<meta property="og:type" content="article">
+<meta property="og:title" content="SYSTEMTAP中得到java调用栈">
+<meta property="og:url" content="http://jangzq.info/2015/08/30/jstack/index.html">
+<meta property="og:site_name" content="Jangzq技术研究">
+<meta property="og:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在systemtap中得到java的调用栈，可以在java程序和libc等、linux内核之间架起一座桥梁，对于java程序的调试调优具有重要的意义。使用systemtap分析的优点有：
+
+不依赖于java版本，任何版本都可以。
+被测程序不需要添加额外的启动参数，可以在任何时候接入调试。
+
+ujvmstap是我开发的tapset，提供">
+<meta property="og:image" content="http://jangzq.info/images/codeheap.png">
+<meta property="og:image" content="http://jangzq.info/images/interpretercode.png">
+<meta property="og:updated_time" content="2015-08-30T03:22:39.000Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="SYSTEMTAP中得到java调用栈">
+<meta name="twitter:description" content="本文为原创文章，欢迎转载，请注明： 转载自Jangzq技术研究
+在systemtap中得到java的调用栈，可以在java程序和libc等、linux内核之间架起一座桥梁，对于java程序的调试调优具有重要的意义。使用systemtap分析的优点有：
+
+不依赖于java版本，任何版本都可以。
+被测程序不需要添加额外的启动参数，可以在任何时候接入调试。
+
+ujvmstap是我开发的tapset，提供">
+
+    
+    <link rel="alternative" href="/atom.xml" title="Jangzq技术研究" type="application/atom+xml">
+    
+    
+    <link rel="icon" href="/img/favicon.ico">
+    
+    
+    <link rel="apple-touch-icon" href="/img/jacman.jpg">
+    <link rel="apple-touch-icon-precomposed" href="/img/jacman.jpg">
+    
+    <link rel="stylesheet" href="/css/style.css" type="text/css">
+</head>
+
+  <body>
+    <header>
+      
+<div>
+		
+			<div id="textlogo">
+				<h1 class="site-name"><a href="/" title="Jangzq技术研究">Jangzq技术研究</a></h1>
+				<h2 class="blog-motto">关注代码的秘密， 记录探索点滴， 分享技术收获</h2>
+			</div>
+			<div class="navbar"><a class="navbutton navmobile" href="#" title="菜单">
+			</a></div>
+			<nav class="animated">
+				<ul>
+					<ul>
+					 
+						<li><a href="/">主页</a></li>
+					
+						<li><a href="/archives">归档</a></li>
+					
+						<li><a href="/about">关于我</a></li>
+					
+					<li>
+ 					
+					<form class="search" action="//google.com/search" method="get" accept-charset="utf-8">
+						<label>Search</label>
+						<input type="search" id="search" name="q" autocomplete="off" maxlength="20" placeholder="搜索" />
+						<input type="hidden" name="q" value="site:jangzq.info">
+					</form>
+					
+					</li>
+				</ul>
+			</nav>			
+</div>
+    </header>
+    <div id="container">
+      <div id="main" class="post" itemscope itemprop="blogPost">
+  
+	<article itemprop="articleBody"> 
+		<header class="article-info clearfix">
+  <h1 itemprop="name">
+    
+      <a href="/2015/08/30/jstack/" title="SYSTEMTAP中得到java调用栈" itemprop="url">SYSTEMTAP中得到java调用栈</a>
+  </h1>
+  <p class="article-author">By
+       
+		<a href="/about" title="Zhang Zq" target="_blank" itemprop="author">Zhang Zq</a>
+		
+  <p class="article-time">
+    <time datetime="2015-08-30T10:24:49.000Z" itemprop="datePublished"> 发表于 2015-08-30</time>
+    
+  </p>
+</header>
+	<div class="article-content">
+		
+		<div id="toc" class="toc-article">
+			<strong class="toc-title">文章目录</strong>
+		
+			<ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#解释器和编译后指令的位置"><span class="toc-number">1.</span> <span class="toc-text">解释器和编译后指令的位置</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#CodeCode和CodeHeap"><span class="toc-number">1.1.</span> <span class="toc-text">CodeCode和CodeHeap</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#解释器"><span class="toc-number">1.2.</span> <span class="toc-text">解释器</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#编译器"><span class="toc-number">1.3.</span> <span class="toc-text">编译器</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#RuntimeStub"><span class="toc-number">1.4.</span> <span class="toc-text">RuntimeStub</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#通过PC得到Method"><span class="toc-number">2.</span> <span class="toc-text">通过PC得到Method</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#解释代码中"><span class="toc-number">2.1.</span> <span class="toc-text">解释代码中</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#编译代码中"><span class="toc-number">2.2.</span> <span class="toc-text">编译代码中</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Native代码中"><span class="toc-number">2.3.</span> <span class="toc-text">Native代码中</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#得到调用栈"><span class="toc-number">3.</span> <span class="toc-text">得到调用栈</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#解释代码中-1"><span class="toc-number">3.1.</span> <span class="toc-text">解释代码中</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#编译代码中-1"><span class="toc-number">3.2.</span> <span class="toc-text">编译代码中</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#得到方法定义及行号"><span class="toc-number">4.</span> <span class="toc-text">得到方法定义及行号</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#从解释代码中得到bci"><span class="toc-number">4.1.</span> <span class="toc-text">从解释代码中得到bci</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#从编译代码中得到bci"><span class="toc-number">4.2.</span> <span class="toc-text">从编译代码中得到bci</span></a></li></ol></li></ol>
+		
+		</div>
+		
+		<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
+<p>在systemtap中得到java的调用栈，可以在java程序和libc等、linux内核之间架起一座桥梁，对于java程序的调试调优具有重要的意义。使用systemtap分析的优点有：</p>
+<ol>
+<li>不依赖于java版本，任何版本都可以。</li>
+<li>被测程序不需要添加额外的启动参数，可以在任何时候接入调试。</li>
+</ol>
+<p>ujvmstap是我开发的tapset，提供了得到java调用栈的函数，地址在：<a href="https://github.com/Jangzq/ujvmstap" target="_blank" rel="external">https://github.com/Jangzq/ujvmstap</a>。<br>icedtea项目也包含一个得到java调用栈的tapset，但是因为下列原因导致我重新开发了一个tapset：</p>
+<ol>
+<li>首先说最重要的原因，由于icedtea的tapset，只能处理当前pc（指令寄存器）在解释器、jit编译的代码中的情况，当pc在native代码中时，将得不到java调用栈，即架不起libc、内核到java之间的桥梁，基本上没有什么实用价值。</li>
+<li>对于在C2编译代码中调用stub的栈，无法得到调用栈，在得到程序热点时，就会有些不精确。</li>
+<li>不能打印java程序的行号。</li>
+<li>返回值等不能满足我调优的需求。</li>
+</ol>
+<p>在本文中介绍的是ujvmstap的原理部分，由于hotspot的资料十分匮乏，我通过阅读openjdk的源码，跟踪调试jdk和生成的动态代码，HSDB等各种手段寻找方法，所以肯定不会系统全面，谬误之处肯定在所难免，请大家多多指正。</p>
+<p><strong>注：没有特殊说明，本文分析均为openjdk7， 操作系统为64位linux。由于我们关注的是服务器端的jdk调优，所以本文中只关心Server Mode的jdk虚拟机。</strong></p>
+<h2 id="解释器和编译后指令的位置">解释器和编译后指令的位置</h2><p>得到调用栈，首要的任务是分辨一个指令地址的归属，在ujvm中处理的归属地包括：</p>
+<ol>
+<li>解释器代码中。</li>
+<li>jit编译代码中。</li>
+<li>jit编译后的代码调用事先准备好的stub（C++代码）。</li>
+<li>native代码<br>其中3）和4）没什么可说的，下面重点介绍1）和2）。</li>
+</ol>
+<h3 id="CodeCode和CodeHeap">CodeCode和CodeHeap</h3><p>hotspot中生成的代码，包括解释执行的代码、runtime stub、jit编译后的代码等，都由CodeCache所管理，下图是相关的类，图中的类只列出了相关的属性。<br><img src="/images/codeheap.png" alt="codecode"></p>
+<p>如图所示，CodeCache是由许多CodeBlob组成的，每个CodeBlob的子类管理不同类型的代码。</p>
+<p>CodeHeap是管理代码存储的底层设施，CodeCache通过CodeHeap存储生成的代码，而CodeHeap组织成HeapBlock，空闲的内存通过FreeBlock链接成链。<br>在虚拟机初始化的时候（init_globals——&gt;codeCache_init），初始化CodeCache中的_heap变量，并且调用其reserve方法从操作系统预留内存，其中的三个参数：<br>reserved_size ： 预留的内存，在linux中，即使用mmap分配的虚拟内存，这部分内存并没有真正分配，当访问某一页时，产生缺页时，在真正分配内存。 在C2编译器的情况下，这个值为：48M。<br>committed_size ：分配的内存。在linux中其实并不起作用。在C2编译器的情况下，这个值为：2304*K。<br>segment_size：CodeHeap用段组织内存，此参数是段的大小。这个值为：64。<br>在CodeHeap中，分配的内存是由HeapBlock管理的，先分配一个HeapBlock结构，再分配需要分配的内存，即分配size大小的内存，占用的内存为sizeof(HeapBlock)+size。<br>CodeCache通过CodeHeap分配实际的内存，分配的内存单元由CodeBlob管理，从内存布局来看，最前面为一个CodeBlob(具体子类）结构，描述后面分配的内存。CodeCache向其它模块，比如解释器模块、编译器模块提供了保存生成代码的服务，下文中分别介绍。</p>
+<h3 id="解释器">解释器</h3><p>解释器同代码保存相关的类，及其相关属性的图如下：<br><img src="/images/interpretercode.png" alt="interpreter"></p>
+<p>从解释器的角度来看，生成的代码存放在StubQueue里，具体引用为：解释器的基类<code>AbstractInterpreter</code>中的成员变量_code。更进一步来说，代码存放的位置为，起始地址为<code>_code-&gt;_stub_buffer</code>，大小为<code>_code-&gt;buffer_size</code>。而_stub_buffer指向哪里呢？即一个BufferBlob(CodeBlob的子类）所管理的内存里。<br>1）在StubQueue构造的时候，向CodeCache申请了一个BufferBlob，x86平台下大小为：204800。<br>2）将_stub_buffer指向blob-&gt;content_begin()。<br>从上面看出，解释器生成代码的位置即起始为：_code-&gt;buffer_size，大小为_buffer_size。<br>至于hostspot如何生成解释器代码，由于和本文无关，所以简单的介绍几句，有兴趣的同学请自行研究。<br>hotspot采用template解释器，顾名思义，即每个字节码指令都有对应的一系列汇编代码，执行时在对应的汇编代码之间跳转。生成汇编代码的入口在TemplateTable::initialize，调用栈为：init_globals-&gt;interpreter_init-&gt;TemplateInterpreter::initialize。具体的生成汇编代码的程序在templateTable_x86_64.cpp中，本文就不展开了。</p>
+<h3 id="编译器">编译器</h3><p>jit编译以方法为单位，编译后的方法由nmethod类表示。从图1中可以看出，nmethod类本身就是CodeBlob的子类，在编译一个方法时，从CodeCache请求内存，得到一块nmethod管理的内存（nmethod::operator new）。生成的汇编代码在nmethod-&gt;_code_offset，和nmethod-&gt;_data_offset之间。</p>
+<h3 id="RuntimeStub">RuntimeStub</h3><p>RuntimeStub，顾名思义，就是从编译器生成的代码里调用一些C++代码时的stub。hotspot中包含如下stub：<br>StackOverflowError throw_exception<br>wrong_method_stub<br>ic_miss_stub<br>resolve_opt_virtual_call<br>resolve_virtual_call<br>resolve_static_call<br>AbstractMethodError throw_exception<br>IncompatibleClassChangeError throw_exception<br>NullPointerException at call throw_exception<br>_new_instance_Java<br>_new_array_Java<br>_new_array_nozero_Java<br>_multianewarray2_Java<br>_multianewarray3_Java<br>_multianewarray4_Java<br>_multianewarray5_Java<br>_multianewarrayN_Java<br>_g1_wb_pre_Java<br>_g1_wb_post_Java<br>_complete_monitor_locking_Java<br>_rethrow_Java<br>_slow_arraycopy_Java<br>_register_finalizer_Java<br>每个stub生成时，从CodeCache中请求内存，代码在<code>RuntimeStub::operator new</code>，即一个stub，对应一个RuntimeStub。</p>
+<h2 id="通过PC得到Method">通过PC得到Method</h2><p>即得到当前正在执行的java方法。同样，分为以下几种情况进行说明。<br>当前pc在：</p>
+<ol>
+<li>解释代码中。</li>
+<li>jit编译代码中。</li>
+<li>jit编译后的代码调用事先准备好的stub（C++代码）。</li>
+<li>native代码<h3 id="解释代码中">解释代码中</h3>在解释代码中得到当前方法比较简单，这里用到了当前方法的栈帧，结构如下（frame_x86.hpp中有描述）。<br>// Layout of asm interpreter frame:<br>//    [expression stack      ] <em> &lt;- sp<br>//    [monitors              ]   \<br>//     …                        | monitor block size<br>//    [monitors              ]   /<br>//    [monitor block size    ]<br>//    [byte code index/pointr]                   = bcx()                bcx_offset<br>//    [pointer to locals     ]                   = locals()             locals_offset<br>//    [constant pool cache   ]                   = cache()              cache_offset<br>//    [methodData            ]                   = mdp()                mdx_offset<br>//    [methodOop             ]                   = method()             method_offset<br>//    [last sp               ]                   = last_sp()            last_sp_offset<br>//    [old stack pointer     ]                     (sender_sp)          sender_sp_offset<br>//    [old frame pointer     ]   &lt;- fp           = link()<br>//    [return pc             ]<br>//    [oop temp              ]                     (only for native calls)<br>//    [locals and parameters ]<br>//                               &lt;- sender sp<br>注意：上面为低地址，下面为高地址。<br>在解释器生成的代码执行时（准确的是，在对应的template汇编中执行的时候），rbp寄存器指向了栈顶位置，内存中`rbp – 3</em>ptr_size`即指向此方法的methodOopDesc，methodOopDesc即方法的描述，从中可以得到方法所属的类，以及方法的原型信息，后文详述。<h3 id="编译代码中">编译代码中</h3>对于编译的代码，每一个方法对应一个nmethod类，类中的属性：<code>methodOop _method</code>，即得到了对应的methodOopDesc。<h3 id="Native代码中">Native代码中</h3>确切的说，是得到调用本地代码的java方法，这是难度最大的地方，其中的关键是需要得到调用本地代码前的寄存器内容。在公开的systemtap函数中，并没有方法得到此信息，但是通过DWARF的文档中可以看出，debuginfo中应该保存有此信息，我分析了systemtap源码，发现了在<code>unwind_cache</code>中记录了pc信息，并没有记录此信息，我修改了一下systemtap，记录了此信息，这样，就可以通过如下代码得到java代码调用本地代码时的寄存器信息，以pc举例：<br>首先调用<code>ubacktrace()</code>，然后调用：</li>
+</ol>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">function z_get_last_ip:<span class="keyword">long</span> () %&#123; </span><br><span class="line">		STAP_RETVALUE=(CONTEXT-&gt;uwcache_user.regs[CONTEXT-&gt;uwcache_user.depth-<span class="number">1</span>]).ip; </span><br><span class="line">%&#125;</span><br></pre></td></tr></table></figure>
+<p>得到了java调用本地代码时候的寄存器值，就可以用普通的方法得到其方法定义。</p>
+<h2 id="得到调用栈">得到调用栈</h2><p>从编译代码中，和解释代码中得到上级方法（调用此方法的方法）的方式不同，分别讨论。</p>
+<h3 id="解释代码中-1">解释代码中</h3><p>解释代码中比较简单，因为fp(rbp)在全过程中不变，根据上文中的栈帧结构，所以可以轻松的得到调用者的栈帧：<br><figure class="highlight lisp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">pc = user_long<span class="list">(<span class="keyword">fp+</span><span class="list">(<span class="number">1</span> <span class="variable">* ujvm_ptr_size)) &amp; ujvm_ptr_mask; </span><br><span class="line">sp = user_long(fp + (-1 *</span> ujvm_ptr_size)</span>)</span> &amp; ujvm_ptr_mask<span class="comment">; </span></span><br><span class="line">fp = user_long<span class="list">(<span class="keyword">fp</span>)</span> &amp; ujvm_ptr_mask<span class="comment">;</span></span><br></pre></td></tr></table></figure></p>
+<h3 id="编译代码中-1">编译代码中</h3><p>在编译代码中， 我根据CodeBlob的_frame_size属性，得到当前栈的大小，目前采用如下方法得到上一帧的寄存器的值：<br><figure class="highlight vim"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">pc</span> = user_long(<span class="keyword">sp</span>+ujvm_ptr_size*frame_size-ujvm_ptr_size)&amp; ujvm_ptr_mask; </span><br><span class="line">fp = user_long(<span class="keyword">sp</span>+ujvm_ptr_size*frame_size-<span class="number">2</span>*ujvm_ptr_size)&amp; ujvm_ptr_mask;		</span><br><span class="line"><span class="keyword">sp</span> = <span class="keyword">sp</span>+ujvm_ptr_size*frame_size;</span><br></pre></td></tr></table></figure></p>
+<p>我觉得可能有些问题，是否编译代码里会修改SP，如果修改后结果是否正确？_frame_size是否是最小的帧大小？目前经过测试，当前的写法似乎问题不大，所以暂时采用这种方法。</p>
+<h2 id="得到方法定义及行号">得到方法定义及行号</h2><p>得到方法定义见：<code>get_method_by_nmethodoop</code><br>就是从methodOopDesc的属性找到对应的类，从中取出类名; 从methodOopDesc的属性中得到方法名，以及参数描述，代码比较清楚，在这里就不细说了。<br>得到行号比较复杂，首先明确几个概念：<br>byte code index(BCI)：字节码索引。<br>compressed linenumber table：在methodOopDesc.constMethodOopDesc的_flag中，如果 _has_linenumber_table位不为0，则说明存在compressed linenumber table，这里面记录着bci到行号的映射。<br>所以若要得到行号，必须首先得到当前的bci，得到当前bci的方法，在解释代码和编译代码中各不相同，从bci得到行号的方法是一样的。</p>
+<h3 id="从解释代码中得到bci">从解释代码中得到bci</h3><p>由上面的栈帧定义可以看出，在<code>fp + (-7 * ujvm_ptr_size)</code>处存放着当前的值即当前的bci的地址，指向的是methodOopDesc后面的bytecode，减去bytecode起始的偏移，就是bci。</p>
+<h3 id="从编译代码中得到bci">从编译代码中得到bci</h3><p>PcDesc中定义了pc（从nmthod的起始的偏移）到bci的映射，所以通过查找此映射，得到bci，具体查找方法，见：<code>ujvm_get_compile_bci</code>。</p>
+  
+	</div>
+		<footer class="article-footer clearfix">
+<div class="article-catetags">
+
+
+  <div class="article-tags">
+  
+  <span></span> <a href="/tags/jvm/">jvm</a><a href="/tags/systemtap/">systemtap</a>
+  </div>
+
+</div>
+
+
+
+	<div class="article-share" id="share">
+	
+	  <div data-url="http://jangzq.info/2015/08/30/jstack/" data-title="SYSTEMTAP中得到java调用栈 | Jangzq技术研究" data-tsina="null" class="share clearfix">
+	  </div>
+	
+	</div>
+
+
+</footer>
+
+   	       
+	</article>
+	
+<nav class="article-nav clearfix">
+ 
+
+<div class="next">
+<a href="/2015/08/29/cms/"  title="Concurrent Mark-Sweep垃圾回收">
+ <strong>下一篇：</strong><br/> 
+ <span>Concurrent Mark-Sweep垃圾回收
+</span>
+</a>
+</div>
+
+</nav>
+
+	
+
+</div>  
+      <div class="openaside"><a class="navbutton" href="#" title="显示侧边栏"></a></div>
+
+  <div id="toc" class="toc-aside">
+  <strong class="toc-title">文章目录</strong>
+ 
+ <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#解释器和编译后指令的位置"><span class="toc-number">1.</span> <span class="toc-text">解释器和编译后指令的位置</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#CodeCode和CodeHeap"><span class="toc-number">1.1.</span> <span class="toc-text">CodeCode和CodeHeap</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#解释器"><span class="toc-number">1.2.</span> <span class="toc-text">解释器</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#编译器"><span class="toc-number">1.3.</span> <span class="toc-text">编译器</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#RuntimeStub"><span class="toc-number">1.4.</span> <span class="toc-text">RuntimeStub</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#通过PC得到Method"><span class="toc-number">2.</span> <span class="toc-text">通过PC得到Method</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#解释代码中"><span class="toc-number">2.1.</span> <span class="toc-text">解释代码中</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#编译代码中"><span class="toc-number">2.2.</span> <span class="toc-text">编译代码中</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Native代码中"><span class="toc-number">2.3.</span> <span class="toc-text">Native代码中</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#得到调用栈"><span class="toc-number">3.</span> <span class="toc-text">得到调用栈</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#解释代码中-1"><span class="toc-number">3.1.</span> <span class="toc-text">解释代码中</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#编译代码中-1"><span class="toc-number">3.2.</span> <span class="toc-text">编译代码中</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#得到方法定义及行号"><span class="toc-number">4.</span> <span class="toc-text">得到方法定义及行号</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#从解释代码中得到bci"><span class="toc-number">4.1.</span> <span class="toc-text">从解释代码中得到bci</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#从编译代码中得到bci"><span class="toc-number">4.2.</span> <span class="toc-text">从编译代码中得到bci</span></a></li></ol></li></ol>
+ 
+  </div>
+
+<div id="asidepart">
+<div class="closeaside"><a class="closebutton" href="#" title="隐藏侧边栏"></a></div>
+<aside class="clearfix">
+
+  
+
+  
+<div class="tagslist">
+	<p class="asidetitle">标签</p>
+		<ul class="clearfix">
+		
+			
+				<li><a href="/tags/linux内核/" title="linux内核">linux内核<sup>14</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/jvm/" title="jvm">jvm<sup>13</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/jdk/" title="jdk">jdk<sup>8</sup></a></li>
+			
+		
+			
+				<li><a href="/tags/systemtap/" title="systemtap">systemtap<sup>1</sup></a></li>
+			
+		
+		</ul>
+</div>
+
+
+  <div class="linkslist">
+  <p class="asidetitle">友情链接</p>
+    <ul>
+        
+    </ul>
+</div>
+
+  <div class="rsspart">
+	<a href="/atom.xml" target="_blank" title="rss">RSS 订阅</a>
+</div>
+
+</aside>
+</div>
+    </div>
+    <footer><div id="footer" >
+	
+	
+	<section class="info">
+		<p> Jangzq&#39;s blog <br/>
+			Focus on the secret of code!</p>
+	</section>
+	 
+	<div class="social-font" class="clearfix">
+		
+		<a href="http://weibo.com/Jangzq" target="_blank" class="icon-weibo" title="微博"></a>
+		
+		
+		<a href="https://github.com/Jangzq" target="_blank" class="icon-github" title="github"></a>
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		<a href="mailto:zqzhangmail@163.com" target="_blank" class="icon-email" title="Email Me"></a>
+		
+	</div>
+			
+		
+
+		<p class="copyright">
+		Powered by <a href="http://hexo.io" target="_blank" title="hexo">hexo</a> and Theme by <a href="https://github.com/wuchong/jacman" target="_blank" title="Jacman">Jacman</a> © 2015 
+		
+		<a href="/about" target="_blank" title="Zhang Zq">Zhang Zq</a>
+		
+		
+		</p>
+</div>
+</footer>
+    <script src="/js/jquery-2.0.3.min.js"></script>
+<script src="/js/jquery.imagesloaded.min.js"></script>
+<script src="/js/gallery.js"></script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.navbar').click(function(){
+    $('header nav').toggleClass('shownav');
+  });
+  var myWidth = 0;
+  function getSize(){
+    if( typeof( window.innerWidth ) == 'number' ) {
+      myWidth = window.innerWidth;
+    } else if( document.documentElement && document.documentElement.clientWidth) {
+      myWidth = document.documentElement.clientWidth;
+    };
+  };
+  var m = $('#main'),
+      a = $('#asidepart'),
+      c = $('.closeaside'),
+      o = $('.openaside');
+  c.click(function(){
+    a.addClass('fadeOut').css('display', 'none');
+    o.css('display', 'block').addClass('fadeIn');
+    m.addClass('moveMain');
+  });
+  o.click(function(){
+    o.css('display', 'none').removeClass('beforeFadeIn');
+    a.css('display', 'block').removeClass('fadeOut').addClass('fadeIn');      
+    m.removeClass('moveMain');
+  });
+  $(window).scroll(function(){
+    o.css("top",Math.max(80,260-$(this).scrollTop()));
+  });
+  
+        getSize();
+        if (myWidth >= 1024) {
+          c.click();
+        }
+  
+  $(window).resize(function(){
+    getSize(); 
+    if (myWidth >= 1024) {
+      $('header nav').removeClass('shownav');
+    }else{
+      m.removeClass('moveMain');
+      a.css('display', 'block').removeClass('fadeOut');
+      o.css('display', 'none');
+      
+      $('#toc.toc-aside').css('display', 'none');
+        
+    }
+  });
+});
+</script>
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var ai = $('.article-content>iframe'),
+      ae = $('.article-content>embed'),
+      t  = $('#toc'),
+      ta = $('#toc.toc-aside'),
+      o  = $('.openaside'),
+      c  = $('.closeaside');
+  if(ai.length>0){
+    ai.wrap('<div class="video-container" />');
+  };
+  if(ae.length>0){
+   ae.wrap('<div class="video-container" />');
+  };
+  c.click(function(){
+    ta.css('display', 'block').addClass('fadeIn');
+  });
+  o.click(function(){
+    ta.css('display', 'none');
+  });
+  $(window).scroll(function(){
+    ta.css("top",Math.max(140,320-$(this).scrollTop()));
+  });
+});
+</script>
+
+
+<script type="text/javascript">
+$(document).ready(function(){ 
+  var $this = $('.share'),
+      url = $this.attr('data-url'),
+      encodedUrl = encodeURIComponent(url),
+      title = $this.attr('data-title'),
+      tsina = $this.attr('data-tsina'),
+      description = $this.attr('description');
+  var html = [
+  '<a href="#" class="overlay" id="qrcode"></a>',
+  '<div class="qrcode clearfix"><span>扫描二维码分享到微信朋友圈</span><a class="qrclose" href="#nothing"></a><strong>Loading...Please wait</strong><img id="qrcode-pic" data-src="http://s.jiathis.com/qrcode.php?url=' + encodedUrl + '"/></div>',
+  '<a href="https://www.facebook.com/sharer.php?u=' + encodedUrl + '" class="article-share-facebook" target="_blank" title="Facebook"></a>',
+  '<a href="https://twitter.com/intent/tweet?url=' + encodedUrl + '" class="article-share-twitter" target="_blank" title="Twitter"></a>',
+  '<a href="#qrcode" class="article-share-qrcode" title="微信"></a>',
+  '<a href="http://widget.renren.com/dialog/share?resourceUrl=' + encodedUrl + '&srcUrl=' + encodedUrl + '&title=' + title +'" class="article-share-renren" target="_blank" title="人人"></a>',
+  '<a href="http://service.weibo.com/share/share.php?title='+title+'&url='+encodedUrl +'&ralateUid='+ tsina +'&searchPic=true&style=number' +'" class="article-share-weibo" target="_blank" title="微博"></a>',
+  '<span title="Share to"></span>'
+  ].join('');
+  $this.append(html);
+  $('.article-share-qrcode').click(function(){
+    var imgSrc = $('#qrcode-pic').attr('data-src');
+    $('#qrcode-pic').attr('src', imgSrc);
+    $('#qrcode-pic').load(function(){
+        $('.qrcode strong').text(' ');
+    });
+  });
+});     
+</script>
+
+
+
+
+
+
+
+
+
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css" media="screen" type="text/css">
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+<script type="text/javascript">
+$(document).ready(function(){ 
+  $('.article-content').each(function(i){
+    $(this).find('img').each(function(){
+      if ($(this).parent().hasClass('fancybox')) return;
+      var alt = this.alt;
+      if (alt) $(this).after('<span class="caption">' + alt + '</span>');
+      $(this).wrap('<a href="' + this.src + '" title="' + alt + '" class="fancybox"></a>');
+    });
+    $(this).find('.fancybox').each(function(){
+      $(this).attr('rel', 'article' + i);
+    });
+  });
+  if($.fancybox){
+    $('.fancybox').fancybox();
+  }
+}); 
+</script>
+
+
+
+<!-- Analytics Begin -->
+
+
+
+<script type="text/javascript">
+var _bdhmProtocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+document.write(unescape("%3Cscript src='" + _bdhmProtocol + "hm.baidu.com/h.js%3F435d1985a249fde8415798105b4f848b' type='text/javascript'%3E%3C/script%3E"));
+</script>
+
+
+
+<!-- Analytics End -->
+
+<!-- Totop Begin -->
+
+	<div id="totop">
+	<a title="返回顶部"><img src="/img/scrollup.png"/></a>
+	</div>
+	<script src="/js/totop.js"></script>
+
+<!-- Totop End -->
+
+<!-- MathJax Begin -->
+<!-- mathjax config similar to math.stackexchange -->
+
+
+<!-- MathJax End -->
+
+<!-- Tiny_search Begin -->
+
+<!-- Tiny_search End -->
+
+  </body>
+</html>

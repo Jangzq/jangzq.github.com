@@ -98,9 +98,9 @@
     <link href="http://jangzq.info/2015/08/30/jstack_demo/"/>
     <id>http://jangzq.info/2015/08/30/jstack_demo/</id>
     <published>2015-08-30T12:27:29.000Z</published>
-    <updated>2015-08-30T05:44:09.000Z</updated>
+    <updated>2015-09-02T10:04:10.000Z</updated>
     <content type="html"><![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>在<a href="https://github.com/Jangzq/ujvmstap" target="_blank" rel="external">ujvmstap</a>中，包含两个实例，一个用来得到调用火焰图，另一个用来得到off cpu的火焰图。<br><strong>下面的图，在新窗口打开后，可以看的更详细(我只试过firefox)</strong></p>
+<p><a href="https://github.com/Jangzq/ujvmstap" target="_blank" rel="external">ujvmstap</a>是我开发的用systemtap打印java调用栈的工具，在<a href="https://github.com/Jangzq/ujvmstap" target="_blank" rel="external">ujvmstap</a>中，包含两个实例，一个用来得到调用火焰图，另一个用来得到off cpu的火焰图。<br><strong>下面的图，在新窗口打开后，可以看的更详细(我只试过firefox)</strong></p>
 <h2 id="调用火焰图">调用火焰图</h2><p>stap脚本为<code>jstackflame.stap</code>，可以直接调用<code>jstackflame.sh</code>，下面为三种调用方法示例。</p>
 <h3 id="打印kenerl，native，java调用栈">打印kenerl，native，java调用栈</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">print</span>_kernel = <span class="number">1</span>;</span><br><span class="line"><span class="built_in">print</span>_ustack = <span class="number">1</span>;</span><br><span class="line"><span class="built_in">print</span>_vmself = <span class="number">0</span>;</span><br></pre></td></tr></table></figure>
 <p><img src="/images/with-kernel.svg" alt="with-kernel"></p>
@@ -112,7 +112,7 @@
 ]]></content>
     <summary type="html">
     <![CDATA[<p><strong>本文为原创文章，欢迎转载，请注明： 转载自<a href="http://jangzq.info/">Jangzq技术研究</a></strong></p>
-<p>在<a href="https://github.com/Jangzq/ujvmstap" t]]>
+<p><a href="https://github.com/Jangzq/ujvmstap" ta]]>
     </summary>
     
       <category term="ujvmstap" scheme="http://jangzq.info/tags/ujvmstap/"/>
